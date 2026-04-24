@@ -19,6 +19,13 @@ YIYI_DB_PASSWORD=change_me_in_production
 YIYI_SERVICE_TOKEN=change_me_to_a_random_secret
 ```
 
+If a value contains `$`, wrap it in single quotes so Docker Compose does not
+interpret it as an environment variable:
+
+```dotenv
+YIYI_DB_PASSWORD='abc$123$t'
+```
+
 If the GHCR images are private, log in on the server with a token that has
 `read:packages` permission:
 
