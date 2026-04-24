@@ -29,7 +29,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${YIYI_REDIS_PORT:-6379}:6379"
     volumes:
       - ./data/redis:/data
     healthcheck:
@@ -89,6 +89,7 @@ services:
       SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: "5"
       SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: "5000"
       REDIS_HOST: 127.0.0.1
+      REDIS_PORT: ${YIYI_REDIS_PORT:-6379}
       USER_REGISTRY_CONFIG_SERVER: http://127.0.0.1:18085
       USER_REGISTRY_HOST: ${YIYI_SERVER_HOST}
       USER_REGISTRY_IP: ${YIYI_SERVER_HOST}
@@ -128,6 +129,7 @@ services:
       MEDIA_REGISTRY_HOST: ${YIYI_SERVER_HOST}
       MEDIA_REGISTRY_IP: ${YIYI_SERVER_HOST}
       REDIS_HOST: 127.0.0.1
+      REDIS_PORT: ${YIYI_REDIS_PORT:-6379}
       YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN}
       YIYI_CACHE_ENABLED: "true"
       LOG_DIR: /data/logs/media
