@@ -1,0 +1,175 @@
+# 生产环境：只从 ghcr.io 拉取镜像，不依赖源码构建。
+#
+# 启动方式：
+#   cp .env.example .env          # 按注释填写 YIYI_SERVER_HOST 等必填项
+#   docker login ghcr.io -u leG09 --password-stdin
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${YIYI_DB_USER:-chris}
+      POSTGRES_PASSWORD: ${YIYI_DB_PASSWORD:-1sdnq123fg123,a.123}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./deploy/postgres-init.sh:/docker-entrypoint-initdb.d/00-init-yiyi.sh:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chris"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  config:
+    image: ghcr.io/leg09/yiyi-config:latest
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18085/actuator/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://127.0.0.1:5432/yiyi_config
+      SPRING_DATASOURCE_USERNAME: ${YIYI_DB_USER:-chris}
+      SPRING_DATASOURCE_PASSWORD: ${YIYI_DB_PASSWORD:-1sdnq123fg123,a.123}
+      CONFIG_REGISTRY_HOST: ${YIYI_SERVER_HOST}
+      YIYI_USER_SERVER_URL: http://127.0.0.1:18082
+      YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN}
+      YIYI_BINARIES_DIR: /app/binaries
+      YIYI_UPLOAD_DIR: /data/config/uploads
+      LOG_DIR: /data/logs/config
+    volumes:
+      - ./data/config/uploads:/data/config/uploads
+      - ./data/logs/config:/data/logs/config
+
+  user:
+    image: ghcr.io/leg09/yiyi-user:latest
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18082/actuator/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://127.0.0.1:5432/yiyi_user
+      SPRING_DATASOURCE_USERNAME: ${YIYI_DB_USER:-chris}
+      SPRING_DATASOURCE_PASSWORD: ${YIYI_DB_PASSWORD:-1sdnq123fg123,a.123}
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "30"
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: "5"
+      SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: "5000"
+      REDIS_HOST: 127.0.0.1
+      USER_REGISTRY_CONFIG_SERVER: http://127.0.0.1:18085
+      USER_REGISTRY_HOST: ${YIYI_SERVER_HOST}
+      USER_REGISTRY_IP: ${YIYI_SERVER_HOST}
+      YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN}
+      YIYI_TELEGRAM_BOT_TOKEN: ${YIYI_TELEGRAM_BOT_TOKEN:-}
+      YIYI_TELEGRAM_BOT_USERNAME: ${YIYI_TELEGRAM_BOT_USERNAME:-}
+      YIYI_GOOGLE_CLIENT_ID: ${YIYI_GOOGLE_CLIENT_ID:-}
+      LOG_DIR: /data/logs/user
+    volumes:
+      - ./data/logs/user:/data/logs/user
+
+  media:
+    image: ghcr.io/leg09/yiyi-media:latest
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      postgres:
+        condition: service_healthy
+      config:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18083/actuator/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://127.0.0.1:5432/yiyi_media
+      SPRING_DATASOURCE_USERNAME: ${YIYI_DB_USER:-chris}
+      SPRING_DATASOURCE_PASSWORD: ${YIYI_DB_PASSWORD:-1sdnq123fg123,a.123}
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "30"
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: "5"
+      SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: "5000"
+      MEDIA_CONFIG_SERVER_URL: http://127.0.0.1:18085
+      MEDIA_REGISTRY_HOST: ${YIYI_SERVER_HOST}
+      MEDIA_REGISTRY_IP: ${YIYI_SERVER_HOST}
+      REDIS_HOST: 127.0.0.1
+      YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN}
+      YIYI_CACHE_ENABLED: "true"
+      LOG_DIR: /data/logs/media
+    volumes:
+      - ./data/logs/media:/data/logs/media
+
+  gateway:
+    image: ghcr.io/leg09/yiyi-gateway:latest
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      config:
+        condition: service_healthy
+      user:
+        condition: service_healthy
+      media:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18086/actuator/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    environment:
+      YIYI_UPSTREAM_CONFIG: http://127.0.0.1:18085
+      SERVER_PORT: "18086"
+      YIYI_LOCAL_HOST_REWRITE: ${YIYI_SERVER_HOST}
+      YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN}
+      LOG_DIR: /data/logs/gateway
+    volumes:
+      - ./data/logs/gateway:/data/logs/gateway
+
+  frontend:
+    image: ghcr.io/leg09/yiyi-frontend:latest
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:18080/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
