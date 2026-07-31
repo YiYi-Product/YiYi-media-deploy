@@ -51,6 +51,7 @@ services:
       YIYI_LICENSE_PUBLIC_JWK_FILE: /etc/yiyi/license-public.jwk
       YIYI_LICENSE_AGENT_LISTEN: 127.0.0.1:18088
       YIYI_LICENSE_CLIENT_VERSION: ${YIYI_RELEASE_VERSION:?请设置发布版本}
+      YIYI_LICENSE_RENEW_INTERVAL: ${YIYI_LICENSE_RENEW_INTERVAL:-15m}
     volumes:
       - license_identity:/var/lib/yiyi-license
       - license_lease:/var/run/yiyi-license
