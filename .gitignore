@@ -1,3 +1,6 @@
 .env
 data/
+backups/
+customer/.env
+customer/backups/
 *.log

@@ -1,0 +1,210 @@
+name: yiyi
+
+x-license-env: &license-env
+  YIYI_LICENSE_LEASE_FILE: /var/run/yiyi-license/lease.jwt
+  YIYI_LICENSE_PUBLIC_JWK_FILE: /etc/yiyi/license-public.jwk
+  YIYI_LICENSE_NATIVE_REQUIRED: "true"
+  YIYI_LICENSE_NATIVE_LIBRARY: /opt/yiyi/lib/libyiyi_license_native.so
+
+services:
+  postgres:
+    image: ${YIYI_POSTGRES_IMAGE:?请在 .env 设置带摘要的 PostgreSQL 镜像}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${YIYI_DB_USER:?请设置 YIYI_DB_USER}
+      POSTGRES_PASSWORD: ${YIYI_DB_PASSWORD:?请设置 YIYI_DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../postgres-init.sh:/docker-entrypoint-initdb.d/00-init-yiyi.sh:ro
+    ports:
+      - "127.0.0.1:${YIYI_DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  redis:
+    image: ${YIYI_REDIS_IMAGE:?请在 .env 设置带摘要的 Redis 镜像}
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:${YIYI_REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  license-agent:
+    image: ${YIYI_LICENSE_AGENT_IMAGE:?请在 .env 设置带摘要的 License Agent 镜像}
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      YIYI_LICENSE_SERVER_URL: ${YIYI_LICENSE_SERVER_URL:?请设置授权服务器 HTTPS 地址}
+      YIYI_LICENSE_STATE_DIR: /var/lib/yiyi-license
+      YIYI_LICENSE_LEASE_FILE: /var/run/yiyi-license/lease.jwt
+      YIYI_LICENSE_ACTIVATION_FILE: /var/lib/yiyi-license/activation-code
+      YIYI_LICENSE_PUBLIC_JWK_FILE: /etc/yiyi/license-public.jwk
+      YIYI_LICENSE_AGENT_LISTEN: 127.0.0.1:18088
+      YIYI_LICENSE_CLIENT_VERSION: ${YIYI_RELEASE_VERSION:?请设置发布版本}
+    volumes:
+      - license_identity:/var/lib/yiyi-license
+      - license_lease:/var/run/yiyi-license
+      - ./config/license-public.jwk:/etc/yiyi/license-public.jwk:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:18088/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+  config:
+    image: ${YIYI_CONFIG_IMAGE:?请在 .env 设置带摘要的 Config 镜像}
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      postgres: {condition: service_healthy}
+      license-agent: {condition: service_healthy}
+    environment:
+      <<: *license-env
+      SERVER_ADDRESS: 127.0.0.1
+      SPRING_DATASOURCE_URL: jdbc:postgresql://127.0.0.1:${YIYI_DB_PORT:-5432}/yiyi_config
+      SPRING_DATASOURCE_USERNAME: ${YIYI_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${YIYI_DB_PASSWORD}
+      CONFIG_REGISTRY_HOST: 127.0.0.1
+      YIYI_USER_SERVER_URL: http://127.0.0.1:18082
+      YIYI_LICENSE_AGENT_URL: http://127.0.0.1:18088
+      YIYI_DOCKER_ONLY: "true"
+      YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN:?请设置高熵服务令牌}
+      YIYI_UPLOAD_DIR: /data/uploads
+      LOG_DIR: /data/logs
+    volumes:
+      - license_lease:/var/run/yiyi-license:ro
+      - ./config/license-public.jwk:/etc/yiyi/license-public.jwk:ro
+      - config_uploads:/data/uploads
+      - config_logs:/data/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18085/actuator/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
+  user:
+    image: ${YIYI_USER_IMAGE:?请在 .env 设置带摘要的 User 镜像}
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      config: {condition: service_healthy}
+    environment:
+      <<: *license-env
+      SERVER_ADDRESS: 127.0.0.1
+      SPRING_DATASOURCE_URL: jdbc:postgresql://127.0.0.1:${YIYI_DB_PORT:-5432}/yiyi_user
+      SPRING_DATASOURCE_USERNAME: ${YIYI_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${YIYI_DB_PASSWORD}
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: ${YIYI_REDIS_PORT:-6379}
+      USER_REGISTRY_CONFIG_SERVER: http://127.0.0.1:18085
+      USER_REGISTRY_HOST: 127.0.0.1
+      USER_REGISTRY_IP: 127.0.0.1
+      YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN}
+      LOG_DIR: /data/logs
+    volumes:
+      - license_lease:/var/run/yiyi-license:ro
+      - ./config/license-public.jwk:/etc/yiyi/license-public.jwk:ro
+      - user_logs:/data/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18082/actuator/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
+  media:
+    image: ${YIYI_MEDIA_IMAGE:?请在 .env 设置带摘要的 Media 镜像}
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      config: {condition: service_healthy}
+    environment:
+      <<: *license-env
+      SERVER_ADDRESS: 127.0.0.1
+      SPRING_DATASOURCE_URL: jdbc:postgresql://127.0.0.1:${YIYI_DB_PORT:-5432}/yiyi_media
+      SPRING_DATASOURCE_USERNAME: ${YIYI_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${YIYI_DB_PASSWORD}
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: ${YIYI_REDIS_PORT:-6379}
+      MEDIA_CONFIG_SERVER_URL: http://127.0.0.1:18085
+      MEDIA_REGISTRY_HOST: 127.0.0.1
+      MEDIA_REGISTRY_IP: 127.0.0.1
+      YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN}
+      LOG_DIR: /data/logs
+    volumes:
+      - license_lease:/var/run/yiyi-license:ro
+      - ./config/license-public.jwk:/etc/yiyi/license-public.jwk:ro
+      - media_logs:/data/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18083/actuator/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
+  gateway:
+    image: ${YIYI_GATEWAY_IMAGE:?请在 .env 设置带摘要的 Gateway 镜像}
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      config: {condition: service_healthy}
+      user: {condition: service_healthy}
+      media: {condition: service_healthy}
+    environment:
+      <<: *license-env
+      SERVER_ADDRESS: 127.0.0.1
+      SERVER_PORT: "18086"
+      YIYI_UPSTREAM_CONFIG: http://127.0.0.1:18085
+      GATEWAY_REGISTRY_HOST: 127.0.0.1
+      GATEWAY_REGISTRY_PORT: "18086"
+      YIYI_LOCAL_HOST_REWRITE: 127.0.0.1
+      YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN}
+      LOG_DIR: /data/logs
+    volumes:
+      - license_lease:/var/run/yiyi-license:ro
+      - ./config/license-public.jwk:/etc/yiyi/license-public.jwk:ro
+      - gateway_logs:/data/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18086/actuator/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
+  frontend:
+    image: ${YIYI_FRONTEND_IMAGE:?请在 .env 设置带摘要的 Frontend 镜像}
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      gateway: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:18080/"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+
+volumes:
+  postgres_data:
+  redis_data:
+  license_identity:
+  license_lease:
+  config_uploads:
+  config_logs:
+  user_logs:
+  media_logs:
+  gateway_logs:
