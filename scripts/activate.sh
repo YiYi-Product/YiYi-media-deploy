@@ -2,7 +2,7 @@
 set -euo pipefail
 source "$(cd "$(dirname "$0")" && pwd)/common.sh"
 
-require_customer_env
+require_deploy_env
 compose up -d license-agent
 printf "请输入一次性激活码（输入不回显）: " >&2
 IFS= read -r -s activation_code
@@ -24,5 +24,5 @@ for _ in $(seq 1 30); do
   fi
   sleep 1
 done
-echo "激活未在 30 秒内完成，请运行 scripts/diagnostics.sh 并联系发布方" >&2
+echo "激活未在 30 秒内完成，请运行 ./yiyi.sh diagnostics 并联系发布方" >&2
 exit 1

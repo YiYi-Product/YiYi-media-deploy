@@ -1,6 +1,11 @@
 .env
+.role
+join.env
+config/cluster-relay.crt
+config/cluster-relay.key
 data/
 backups/
-customer/.env
-customer/backups/
+.nodes-enabled
+diagnostics-*/
+diagnostics-*.tar.gz
 *.log
