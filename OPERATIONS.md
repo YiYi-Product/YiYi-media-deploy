@@ -5,7 +5,7 @@
 单台服务器执行：
 
 ```bash
-cd /opt/YiYi-deploy
+cd /opt/YiYi-media-deploy
 sudo ./yiyi.sh update
 ```
 
@@ -22,7 +22,7 @@ Storage 和 Play 节点请在网页“节点管理”中升级。
 单台部署在当前服务器执行；多服务器部署在 Control 服务器执行：
 
 ```bash
-cd /opt/YiYi-deploy
+cd /opt/YiYi-media-deploy
 sudo ./yiyi.sh backup /secure/yiyi-backups
 ```
 
@@ -33,7 +33,7 @@ sudo ./yiyi.sh backup /secure/yiyi-backups
 恢复会覆盖现有数据，请先停止业务操作并确认备份目录正确：
 
 ```bash
-cd /opt/YiYi-deploy
+cd /opt/YiYi-media-deploy
 sudo ./yiyi.sh restore /secure/yiyi-backups/<备份目录名>
 ```
 
@@ -69,7 +69,7 @@ sudo ./yiyi.sh check
 先执行：
 
 ```bash
-cd /opt/YiYi-deploy
+cd /opt/YiYi-media-deploy
 sudo ./yiyi.sh check
 sudo ./yiyi.sh status
 ```

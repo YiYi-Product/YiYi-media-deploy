@@ -15,8 +15,8 @@
 在服务器执行：
 
 ```bash
-git clone https://github.com/leG09/YiYi-deploy.git /opt/YiYi-deploy
-cd /opt/YiYi-deploy
+git clone https://github.com/YiYi-Product/YiYi-media-deploy.git /opt/YiYi-media-deploy
+cd /opt/YiYi-media-deploy
 sudo ./install.sh single --host <服务器IP或域名>
 ```
 
@@ -54,8 +54,8 @@ Storage 和 Play 节点由网页自助部署：
 先在每台服务器执行：
 
 ```bash
-git clone https://github.com/leG09/YiYi-deploy.git /opt/YiYi-deploy
-cd /opt/YiYi-deploy
+git clone https://github.com/YiYi-Product/YiYi-media-deploy.git /opt/YiYi-media-deploy
+cd /opt/YiYi-media-deploy
 ```
 
 ### 1. 安装主服务器
@@ -63,7 +63,7 @@ cd /opt/YiYi-deploy
 在主服务器执行：
 
 ```bash
-cd /opt/YiYi-deploy
+cd /opt/YiYi-media-deploy
 sudo ./install.sh control --host <主服务器IP或者域名>
 ```
 
@@ -94,7 +94,7 @@ Storage 和 Play 节点仍然在网页“节点管理”中创建和部署。
 
 ## 常用命令
 
-在 `/opt/YiYi-deploy` 目录执行：
+在 `/opt/YiYi-media-deploy` 目录执行：
 
 ```bash
 sudo ./yiyi.sh status     # 查看运行状态
