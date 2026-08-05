@@ -2,70 +2,133 @@
 set -euo pipefail
 
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$DEPLOY_DIR/scripts/common.sh"
+cd "$DEPLOY_DIR"
 
-usage() {
-  cat <<'EOF'
-用法：
-  sudo ./install.sh single  --host <本机IP或域名>
-  sudo ./install.sh control --host <主控机内网IP>
-  sudo ./install.sh edge    --host <本机内网IP> --public-host <公网域名> --join <join.env>
-  sudo ./install.sh user    --host <本机内网IP> --join <join.env>
-  sudo ./install.sh media   --host <本机内网IP> --join <join.env>
-EOF
-}
-
-role="single"
-if [[ $# -gt 0 && "$1" != --* ]]; then
-  role="$1"
-  shift
+if [[ $# -gt 0 ]]; then
+  echo "用法：配置 .env 后执行 ./install.sh" >&2
+  exit 2
 fi
-validate_role "$role" || { usage >&2; exit 2; }
 
-server_host=""
-public_host=""
-join_file=""
-node_id=""
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --host) server_host="${2:-}"; shift 2 ;;
-    --public-host) public_host="${2:-}"; shift 2 ;;
-    --join) join_file="${2:-}"; shift 2 ;;
-    --node-id) node_id="${2:-}"; shift 2 ;;
-    -h|--help) usage; exit 0 ;;
-    *) usage >&2; exit 2 ;;
-  esac
-done
+if [[ ! -f .env ]]; then
+  cp .env.example .env
+  chmod 0600 .env
+  echo "已生成 $DEPLOY_DIR/.env，请完成配置后再次运行 ./install.sh" >&2
+  exit 1
+fi
 
 for tool in docker openssl curl python3; do
   command -v "$tool" >/dev/null 2>&1 || { echo "未安装 $tool" >&2; exit 1; }
 done
 docker compose version >/dev/null 2>&1 || { echo "需要 Docker Compose v2" >&2; exit 1; }
+docker info >/dev/null 2>&1 || { echo "Docker daemon 不可用" >&2; exit 1; }
 
-if [[ -z "$server_host" || ! "$server_host" =~ ^[0-9A-Za-z._-]+$ ]]; then
-  echo "请通过 --host 填写不带协议和路径、且能被其他服务器访问的本机地址" >&2
+env_value() {
+  local file="$1" key="$2"
+  awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$file"
+}
+
+set_env_value() {
+  local file="$1" key="$2" value="$3" temp
+  temp="$(mktemp "${file}.XXXXXX")"
+  awk -v key="$key" -v value="$value" '
+    index($0, key "=") == 1 {print key "=" value; found=1; next}
+    {print}
+    END {if (!found) print key "=" value}
+  ' "$file" > "$temp"
+  chmod 0600 "$temp"
+  mv "$temp" "$file"
+}
+
+validate_role() {
+  case "$1" in
+    single|control|user|media|edge) return 0 ;;
+    *) echo "不支持的部署角色：$1" >&2; return 1 ;;
+  esac
+}
+
+copy_env_keys() {
+  local source_file="$1" target_file="$2" key value
+  shift 2
+  for key in "$@"; do
+    value="$(env_value "$source_file" "$key")"
+    [[ -n "$value" ]] || { echo "$source_file 缺少 $key" >&2; return 1; }
+    set_env_value "$target_file" "$key" "$value"
+  done
+}
+
+role="$(env_value .env YIYI_DEPLOY_ROLE)"
+role="${role:-single}"
+validate_role "$role"
+server_host="$(env_value .env YIYI_SERVER_HOST)"
+public_host="$(env_value .env YIYI_PUBLIC_HOST)"
+if [[ -z "$server_host" || "$server_host" == REPLACE_* || ! "$server_host" =~ ^[0-9A-Za-z._-]+$ ]]; then
+  echo "请在 .env 中填写不带协议和路径的 YIYI_SERVER_HOST" >&2
   exit 1
 fi
-public_host="${public_host:-$server_host}"
-if [[ ! "$public_host" =~ ^[0-9A-Za-z._-]+$ ]]; then
-  echo "--public-host 不得包含协议或路径" >&2
-  exit 1
+if [[ -z "$public_host" || "$public_host" == REPLACE_* ]]; then
+  public_host="$server_host"
+fi
+[[ "$public_host" =~ ^[0-9A-Za-z._-]+$ ]] || { echo "YIYI_PUBLIC_HOST 格式无效" >&2; exit 1; }
+
+installed=false
+if [[ -f .installed || -s .role ]]; then
+  installed=true
+fi
+if [[ -s .role ]]; then
+  installed_role="$(tr -d '[:space:]' < .role)"
+  [[ "$installed_role" == "$role" ]] || {
+    echo "本目录已安装为 $installed_role，不能改为 $role" >&2
+    exit 1
+  }
 fi
 
-cd "$DEPLOY_DIR"
-if [[ -s .role && "$(deployment_role)" != "$role" ]]; then
-  echo "本目录已安装为 $(deployment_role) 角色，不能直接改成 $role；请使用新的部署目录" >&2
-  exit 1
+if [[ "$installed" == true && -d .git && "${YIYI_INSTALL_REEXEC:-0}" != "1" ]]; then
+  old_head="$(git rev-parse HEAD)"
+  git pull --ff-only
+  new_head="$(git rev-parse HEAD)"
+  if [[ "$old_head" != "$new_head" ]]; then
+    export YIYI_INSTALL_REEXEC=1
+    exec "$DEPLOY_DIR/install.sh"
+  fi
 fi
-if [[ ! -f .env ]]; then
-  cp .env.example .env
-  chmod 0600 .env
+
+profile_args=(--profile "$role")
+compose() {
+  docker compose --env-file "$DEPLOY_DIR/.env" -f "$DEPLOY_DIR/compose.yaml" "${profile_args[@]}" "$@"
+}
+
+cluster_keys=(
+  YIYI_DB_HOST YIYI_REDIS_HOST YIYI_CONFIG_HOST YIYI_USER_HOST
+  YIYI_DB_USER YIYI_DB_PASSWORD YIYI_REDIS_PASSWORD YIYI_SERVICE_TOKEN
+  YIYI_LICENSE_CLUSTER_TOKEN YIYI_LICENSE_SERVER_URL
+  YIYI_LICENSE_SYNC_URL
+)
+
+if [[ "$role" != "single" && "$role" != "control" && "$installed" == false ]]; then
+  [[ -s join.env ]] || { echo "$role 角色缺少 $DEPLOY_DIR/join.env" >&2; exit 1; }
+  [[ -s cluster-relay.crt ]] || { echo "$role 角色缺少 $DEPLOY_DIR/cluster-relay.crt" >&2; exit 1; }
+  copy_env_keys join.env .env "${cluster_keys[@]}"
+  cp cluster-relay.crt config/cluster-relay.crt
+  chmod 0644 config/cluster-relay.crt
 fi
-printf '%s\n' "$role" > .role
-chmod 0600 .role
+
+set_env_value .env YIYI_DEPLOY_ROLE "$role"
+set_env_value .env YIYI_SERVER_HOST "$server_host"
+set_env_value .env YIYI_PUBLIC_HOST "$public_host"
+set_env_value .env YIYI_ADVERTISE_HOST "$server_host"
+
+generate_secret_if_needed() {
+  local key="$1" value
+  value="$(env_value .env "$key")"
+  if [[ -z "$value" || "$value" == "GENERATE_ON_INSTALL" ]]; then
+    set_env_value .env "$key" "$(openssl rand -hex 32)"
+  fi
+}
 
 generate_relay_certificate() {
-  local cert="$DEPLOY_DIR/config/cluster-relay.crt" key="$DEPLOY_DIR/config/cluster-relay.key" san
+  local cert="$DEPLOY_DIR/config/cluster-relay.crt"
+  local key="$DEPLOY_DIR/config/cluster-relay.key"
+  local san
   [[ -s "$cert" && -s "$key" ]] && return
   if [[ "$server_host" =~ ^[0-9a-fA-F:.]+$ ]]; then san="IP:$server_host"; else san="DNS:$server_host"; fi
   openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 825 \
@@ -76,34 +139,9 @@ generate_relay_certificate() {
   chmod 0644 "$cert"
 }
 
-cluster_key_list=(
-  YIYI_DB_HOST YIYI_REDIS_HOST YIYI_CONFIG_HOST YIYI_USER_HOST
-  YIYI_DB_USER YIYI_DB_PASSWORD YIYI_REDIS_PASSWORD YIYI_SERVICE_TOKEN
-  YIYI_LICENSE_CLUSTER_TOKEN YIYI_LICENSE_SYNC_URL YIYI_LICENSE_SYNC_INTERVAL
-  YIYI_DB_PORT YIYI_REDIS_PORT
-)
-
-if [[ "$role" != "single" && "$role" != "control" ]]; then
-  [[ -f "$join_file" ]] || { echo "$role 角色必须通过 --join 指定主控机生成的 join.env" >&2; exit 1; }
-  copy_env_keys "$join_file" .env "${cluster_key_list[@]}"
-  relay_cert="$(cd "$(dirname "$join_file")" && pwd)/cluster-relay.crt"
-  [[ -s "$relay_cert" ]] || { echo "join.env 同目录缺少 cluster-relay.crt" >&2; exit 1; }
-  cp "$relay_cert" "$DEPLOY_DIR/config/cluster-relay.crt"
-  chmod 0644 "$DEPLOY_DIR/config/cluster-relay.crt"
-fi
-
-set_env_value .env YIYI_SERVER_HOST "$server_host"
-set_env_value .env YIYI_PUBLIC_HOST "$public_host"
-set_env_value .env YIYI_ADVERTISE_HOST "$server_host"
-
-generate_secret_if_needed() {
-  local key="$1"
-  if [[ "$(env_value .env "$key")" == "GENERATE_ON_INSTALL" ]]; then
-    set_env_value .env "$key" "$(openssl rand -hex 32)"
-  fi
-}
-
 if [[ "$role" == "single" || "$role" == "control" ]]; then
+  db_user="$(env_value .env YIYI_DB_USER)"
+  set_env_value .env YIYI_DB_USER "${db_user:-yiyi}"
   generate_secret_if_needed YIYI_DB_PASSWORD
   generate_secret_if_needed YIYI_REDIS_PASSWORD
   generate_secret_if_needed YIYI_SERVICE_TOKEN
@@ -119,6 +157,8 @@ if [[ "$role" == "single" ]]; then
   set_env_value .env YIYI_INFRA_BIND_HOST 127.0.0.1
   set_env_value .env YIYI_LICENSE_RELAY_LISTEN ""
 elif [[ "$role" == "control" ]]; then
+  user_host="$(env_value .env YIYI_USER_HOST)"
+  [[ "$user_host" =~ ^[0-9A-Za-z._-]+$ ]] || { echo "Control 角色必须填写 YIYI_USER_HOST" >&2; exit 1; }
   set_env_value .env YIYI_DB_HOST "$server_host"
   set_env_value .env YIYI_REDIS_HOST "$server_host"
   set_env_value .env YIYI_CONFIG_HOST "$server_host"
@@ -127,35 +167,152 @@ elif [[ "$role" == "control" ]]; then
   set_env_value .env YIYI_LICENSE_SYNC_URL "https://$server_host:18089/v1/lease"
 fi
 
-if [[ "$role" == "storage" ]]; then
-  [[ -n "$node_id" ]] || { echo "storage 角色必须通过 --node-id 指定在控制面创建的节点 ID" >&2; exit 1; }
-  [[ "$node_id" =~ ^[0-9A-Za-z._-]+$ ]] || { echo "Storage 节点 ID 格式无效" >&2; exit 1; }
-  set_env_value .env YIYI_STORAGE_NODE_ID "$node_id"
-elif [[ "$role" == "play" ]]; then
-  [[ -n "$node_id" ]] || { echo "play 角色必须通过 --node-id 指定在控制面创建的节点 ID" >&2; exit 1; }
-  [[ "$node_id" =~ ^[0-9A-Za-z._-]+$ ]] || { echo "Play 节点 ID 格式无效" >&2; exit 1; }
-  set_env_value .env YIYI_PLAY_AGENT_NODE_ID "$node_id"
+sync_license_public_key() {
+  local server_url target temp kid
+  server_url="$(env_value .env YIYI_LICENSE_SERVER_URL)"
+  server_url="${server_url%/}"
+  [[ "$server_url" =~ ^https://[0-9A-Za-z._-]+(:[0-9]{1,5})?$ ]] || {
+    echo "YIYI_LICENSE_SERVER_URL 必须是不带路径的 HTTPS 地址" >&2
+    return 1
+  }
+  target="$DEPLOY_DIR/config/license-public.runtime.jwk"
+  temp="$(mktemp "$DEPLOY_DIR/config/license-public.runtime.jwk.XXXXXX")"
+  if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+      --fail --silent --show-error "$server_url/api/v1/public-keys" | \
+    python3 -c '
+import json, sys
+document = json.load(sys.stdin)
+keys = document.get("keys")
+if not isinstance(keys, list) or not keys:
+    raise SystemExit("授权服务器未返回公钥")
+key = keys[0]
+if key.get("kty") != "OKP" or key.get("crv") != "Ed25519" or not key.get("kid") or not key.get("x"):
+    raise SystemExit("授权服务器返回的不是有效 Ed25519 公钥")
+if any(name in key for name in ("d", "p", "q", "dp", "dq")):
+    raise SystemExit("授权公钥意外包含私钥字段")
+json.dump(key, sys.stdout, separators=(",", ":"))
+sys.stdout.write("\n")
+' > "$temp"; then
+    rm -f "$temp"
+    return 1
+  fi
+  chmod 0644 "$temp"
+  mv "$temp" "$target"
+  kid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["kid"])' "$target")"
+  echo "授权公钥已同步：$kid"
+}
+
+preflight() {
+  if grep -Eq 'GENERATE_ON_INSTALL|example\.invalid' .env; then
+    echo "配置仍包含占位值" >&2
+    return 1
+  fi
+  local key value cluster_token
+  for key in YIYI_SERVER_HOST YIYI_ADVERTISE_HOST YIYI_DB_PASSWORD YIYI_REDIS_PASSWORD YIYI_SERVICE_TOKEN YIYI_LICENSE_CLUSTER_TOKEN; do
+    value="$(env_value .env "$key")"
+    [[ -n "$value" && "$value" != REPLACE_* ]] || { echo "缺少 $key" >&2; return 1; }
+  done
+  cluster_token="$(env_value .env YIYI_LICENSE_CLUSTER_TOKEN)"
+  [[ ${#cluster_token} -ge 32 ]] || { echo "YIYI_LICENSE_CLUSTER_TOKEN 长度不足" >&2; return 1; }
+  [[ -s config/license-public.runtime.jwk ]] || { echo "授权公钥缺失" >&2; return 1; }
+  [[ -s config/cluster-relay.crt ]] || { echo "集群同步证书缺失" >&2; return 1; }
+  if [[ "$role" == "single" || "$role" == "control" ]]; then
+    [[ -s config/cluster-relay.key ]] || { echo "集群同步私钥缺失" >&2; return 1; }
+  fi
+  compose config -q
+}
+
+create_backup() {
+  local timestamp target
+  timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  target="$DEPLOY_DIR/backups/$timestamp"
+  mkdir -p "$target"
+  umask 077
+  compose exec -T postgres sh -c 'pg_dumpall --clean --if-exists -U "$POSTGRES_USER"' > "$target/postgres.sql"
+  compose cp config:/data/uploads/. "$target/config-uploads" >/dev/null 2>&1 || true
+  compose cp license-agent:/var/lib/yiyi-license/. "$target/license-identity" >/dev/null
+  cp .env "$target/runtime.env"
+  cp .role "$target/role"
+  cp config/license-public.runtime.jwk "$target/license-public.jwk"
+  cp config/cluster-relay.crt "$target/cluster-relay.crt"
+  cp config/cluster-relay.key "$target/cluster-relay.key"
+  chmod -R go-rwx "$target"
+  echo "升级前备份已生成：$target"
+}
+
+export_join() {
+  umask 077
+  {
+    echo "# YiYi 集群加入配置；导入后应删除。"
+    local key
+    for key in "${cluster_keys[@]}"; do
+      printf '%s=%s\n' "$key" "$(env_value .env "$key")"
+    done
+  } > join.env
+  chmod 0600 join.env
+  cp config/cluster-relay.crt cluster-relay.crt
+  chmod 0644 cluster-relay.crt
+}
+
+check_endpoint() {
+  local name="$1" url="$2"
+  curl -fsS --max-time 5 "$url" >/dev/null || { echo "$name 健康检查失败：$url" >&2; return 1; }
+}
+
+healthcheck() {
+  case "$role" in
+    single)
+      check_endpoint license-agent http://127.0.0.1:18088/v1/status
+      check_endpoint config http://127.0.0.1:18085/api/license/status
+      check_endpoint user http://127.0.0.1:18082/api/license/status
+      check_endpoint media http://127.0.0.1:18083/api/license/status
+      check_endpoint gateway http://127.0.0.1:18086/api/license/status
+      check_endpoint frontend http://127.0.0.1:18080/
+      ;;
+    control)
+      check_endpoint license-agent http://127.0.0.1:18088/v1/status
+      check_endpoint config http://127.0.0.1:18085/api/license/status
+      ;;
+    user)
+      check_endpoint license-sync http://127.0.0.1:18088/v1/status
+      check_endpoint user http://127.0.0.1:18082/api/license/status
+      ;;
+    media)
+      check_endpoint license-sync http://127.0.0.1:18088/v1/status
+      check_endpoint media http://127.0.0.1:18083/api/license/status
+      ;;
+    edge)
+      check_endpoint license-sync http://127.0.0.1:18088/v1/status
+      check_endpoint gateway http://127.0.0.1:18086/api/license/status
+      check_endpoint frontend http://127.0.0.1:18080/
+      ;;
+  esac
+}
+
+if [[ "$installed" == true ]]; then
+  echo "正在升级 $role"
+fi
+sync_license_public_key
+preflight
+
+if [[ "$installed" == true && ( "$role" == "single" || "$role" == "control" ) ]]; then
+  create_backup
 fi
 
-echo "[1/3] 检查 $role 角色配置"
-"$DEPLOY_DIR/scripts/preflight.sh"
-echo "[2/3] 拉取固定版本镜像"
 compose pull
-echo "[3/3] 启动 $role 角色服务"
-compose up -d --wait --wait-timeout 300
+compose up -d --remove-orphans --wait --wait-timeout 300
+healthcheck
 
-case "$role" in
-  single)
-    echo "安装完成，请访问 http://$public_host:18080 并在网页输入一次性授权码。"
-    ;;
-  control)
-    "$DEPLOY_DIR/yiyi.sh" export-join "$DEPLOY_DIR/join.env"
-    echo "主控服务安装完成。请通过安全渠道把 $DEPLOY_DIR/join.env 传给其他服务器，再安装 edge/user/media 等角色。"
-    ;;
-  edge)
-    echo "边缘入口安装完成，请访问 http://$public_host:18080；主控尚未激活时网页会显示授权码输入页面。"
-    ;;
-  *)
-    echo "$role 角色安装完成。"
-    ;;
-esac
+printf '%s\n' "$role" > .role
+chmod 0600 .role
+touch .installed
+chmod 0600 .installed
+
+if [[ "$role" == "control" ]]; then
+  export_join
+  echo "已生成 join.env 和 cluster-relay.crt，请通过安全方式复制到其他节点。"
+elif [[ "$role" == "single" || "$role" == "edge" ]]; then
+  echo "完成，请访问 http://$public_host:18080；首次使用直接在网页激活。"
+else
+  echo "$role 完成。"
+fi
