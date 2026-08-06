@@ -148,3 +148,18 @@ sudo ./install.sh
 
 首次授权和后续授权状态均在网页中处理，不需要命令行激活。
 端口和安全说明见 [OPERATIONS.md](OPERATIONS.md)。
+
+## 常用管理命令
+
+安装脚本会把部署角色写入 `.env` 的 `COMPOSE_PROFILES`。在部署目录中可以直接执行：
+
+```bash
+docker compose ps
+docker compose stop
+docker compose start
+docker compose restart
+docker compose down
+docker compose up -d
+```
+
+上述命令会自动使用当前角色，不需要手动添加 `--profile`、`--env-file` 或 `-f`。

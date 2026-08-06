@@ -114,6 +114,7 @@ if [[ "$role" != "single" && "$role" != "control" && "$installed" == false ]]; t
 fi
 
 set_env_value .env YIYI_DEPLOY_ROLE "$role"
+set_env_value .env COMPOSE_PROFILES "$role"
 set_env_value .env YIYI_SERVER_HOST "$server_host"
 set_env_value .env YIYI_PUBLIC_HOST "$public_host"
 set_env_value .env YIYI_ADVERTISE_HOST "$server_host"

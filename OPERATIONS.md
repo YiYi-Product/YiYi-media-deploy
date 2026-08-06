@@ -13,6 +13,10 @@ sudo ./install.sh
 升级前会自动备份到 `backups/`。恢复数据会覆盖现有数据，需要时请联系
 发布方处理。
 
+安装后 `.env` 中的 `COMPOSE_PROFILES` 会自动匹配当前部署角色，因此在部署目录
+可以直接使用 `docker compose ps`、`docker compose stop`、`docker compose start`、
+`docker compose restart`、`docker compose down` 和 `docker compose up -d`。
+
 所有持久化数据默认位于部署目录下的 `data`，包括 PostgreSQL、Redis、上传文件、
 许可证状态和服务日志。可以在 `.env` 中通过 `YIYI_DATA_DIR` 指定其他数据根目录；
 相对路径以部署目录为基准。迁移或复制物理数据库目录前必须停止 PostgreSQL，并
