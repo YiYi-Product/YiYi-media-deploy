@@ -125,7 +125,6 @@ services:
       CONFIG_REGISTRY_IP: ${YIYI_ADVERTISE_HOST}
       YIYI_USER_SERVER_URL: http://${YIYI_USER_HOST:-127.0.0.1}:18082
       YIYI_LICENSE_AGENT_URL: http://127.0.0.1:18088
-      YIYI_DOCKER_ONLY: "true"
       YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN:?请设置高熵服务令牌}
       YIYI_UPLOAD_DIR: /data/uploads
       LOG_DIR: /data/logs
