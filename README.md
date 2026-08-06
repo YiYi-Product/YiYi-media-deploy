@@ -31,6 +31,28 @@ YIYI_SERVER_HOST=<服务器IP或域名>
 `YIYI_DB_USER`、`YIYI_DB_PASSWORD` 和 `YIYI_REDIS_PASSWORD` 已在模板中保留；
 密码保持 `GENERATE_ON_INSTALL` 即可由脚本自动生成，也可以在安装前自行设置。
 
+所有持久化数据默认保存在部署目录下的 `data`，包括 PostgreSQL、Redis、上传文件、
+许可证运行状态和服务日志。主要目录如下：
+
+```text
+data/
+├── postgres/
+├── redis/
+├── config/uploads/
+├── license/{identity,lease,sync-state}/
+└── logs/{config,user,media,gateway}/
+```
+
+如需放到独立磁盘或目录，在 `.env` 中设置数据根目录（相对路径以部署目录为基准）：
+
+```dotenv
+YIYI_DATA_DIR=/var/lib/yiyi
+```
+
+若 `data/postgres` 已包含 PostgreSQL 16 数据，安装脚本会直接使用；此时必须在
+`.env` 中填写原数据库的 `YIYI_DB_USER` 和 `YIYI_DB_PASSWORD`。旧版安装使用的
+全部 Docker 命名卷会在首次升级时统一迁移，迁移完成后仍保留原卷以便回退。
+
 然后执行：
 
 ```bash

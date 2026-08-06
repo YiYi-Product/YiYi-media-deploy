@@ -6,5 +6,6 @@ config/cluster-relay.key
 data/
 backups/
 .installed
+.named-volumes-migrated
 config/license-public.runtime.jwk
 *.log

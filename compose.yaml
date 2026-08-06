@@ -15,7 +15,9 @@ services:
       POSTGRES_USER: ${YIYI_DB_USER:?请设置 YIYI_DB_USER}
       POSTGRES_PASSWORD: ${YIYI_DB_PASSWORD:?请设置 YIYI_DB_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/postgres
+        target: /var/lib/postgresql/data
       - ./postgres-init.sql:/docker-entrypoint-initdb.d/00-init-yiyi.sql:ro
     ports:
       - "${YIYI_INFRA_BIND_HOST:-127.0.0.1}:${YIYI_DB_PORT:-5432}:5432"
@@ -34,7 +36,9 @@ services:
     environment:
       REDIS_PASSWORD: ${YIYI_REDIS_PASSWORD}
     volumes:
-      - redis_data:/data
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/redis
+        target: /data
     ports:
       - "${YIYI_INFRA_BIND_HOST:-127.0.0.1}:${YIYI_REDIS_PORT:-6379}:6379"
     healthcheck:
@@ -62,8 +66,12 @@ services:
       YIYI_LICENSE_CLIENT_VERSION: latest
       YIYI_LICENSE_RENEW_INTERVAL: 15m
     volumes:
-      - license_identity:/var/lib/yiyi-license
-      - license_lease:/var/run/yiyi-license
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/license/identity
+        target: /var/lib/yiyi-license
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/license/lease
+        target: /var/run/yiyi-license
       - ./config/license-public.runtime.jwk:/etc/yiyi/license-public.jwk:ro
       - ./config/cluster-relay.crt:/etc/yiyi/cluster-relay.crt:ro
       - ./config/cluster-relay.key:/etc/yiyi/cluster-relay.key:ro
@@ -88,8 +96,12 @@ services:
       YIYI_LICENSE_CLUSTER_TOKEN: ${YIYI_LICENSE_CLUSTER_TOKEN:?请设置集群许可证同步令牌}
       YIYI_LICENSE_SYNC_INTERVAL: 30s
     volumes:
-      - license_sync_state:/var/lib/yiyi-license-sync
-      - license_lease:/var/run/yiyi-license
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/license/sync-state
+        target: /var/lib/yiyi-license-sync
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/license/lease
+        target: /var/run/yiyi-license
       - ./config/license-public.runtime.jwk:/etc/yiyi/license-public.jwk:ro
       - ./config/cluster-relay.crt:/etc/yiyi/cluster-relay.crt:ro
     healthcheck:
@@ -118,10 +130,17 @@ services:
       YIYI_UPLOAD_DIR: /data/uploads
       LOG_DIR: /data/logs
     volumes:
-      - license_lease:/var/run/yiyi-license:ro
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/license/lease
+        target: /var/run/yiyi-license
+        read_only: true
       - ./config/license-public.runtime.jwk:/etc/yiyi/license-public.jwk:ro
-      - config_uploads:/data/uploads
-      - config_logs:/data/logs
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/config/uploads
+        target: /data/uploads
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/logs/config
+        target: /data/logs
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18085/actuator/health >/dev/null"]
       interval: 15s
@@ -149,9 +168,14 @@ services:
       YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN}
       LOG_DIR: /data/logs
     volumes:
-      - license_lease:/var/run/yiyi-license:ro
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/license/lease
+        target: /var/run/yiyi-license
+        read_only: true
       - ./config/license-public.runtime.jwk:/etc/yiyi/license-public.jwk:ro
-      - user_logs:/data/logs
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/logs/user
+        target: /data/logs
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18082/actuator/health >/dev/null"]
       interval: 15s
@@ -179,9 +203,14 @@ services:
       YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN}
       LOG_DIR: /data/logs
     volumes:
-      - license_lease:/var/run/yiyi-license:ro
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/license/lease
+        target: /var/run/yiyi-license
+        read_only: true
       - ./config/license-public.runtime.jwk:/etc/yiyi/license-public.jwk:ro
-      - media_logs:/data/logs
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/logs/media
+        target: /data/logs
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18083/actuator/health >/dev/null"]
       interval: 15s
@@ -199,15 +228,21 @@ services:
       SERVER_ADDRESS: 0.0.0.0
       SERVER_PORT: "18086"
       YIYI_UPSTREAM_CONFIG: http://${YIYI_CONFIG_HOST:-127.0.0.1}:18085
+      YIYI_UPSTREAM_USER: http://${YIYI_USER_HOST:-127.0.0.1}:18082
       GATEWAY_REGISTRY_HOST: ${YIYI_ADVERTISE_HOST:?请设置本机可达地址}
       GATEWAY_REGISTRY_PORT: "18086"
       YIYI_LOCAL_HOST_REWRITE: ${YIYI_ADVERTISE_HOST}
       YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN}
       LOG_DIR: /data/logs
     volumes:
-      - license_lease:/var/run/yiyi-license:ro
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/license/lease
+        target: /var/run/yiyi-license
+        read_only: true
       - ./config/license-public.runtime.jwk:/etc/yiyi/license-public.jwk:ro
-      - gateway_logs:/data/logs
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/logs/gateway
+        target: /data/logs
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18086/actuator/health >/dev/null"]
       interval: 15s
@@ -225,15 +260,3 @@ services:
       interval: 15s
       timeout: 5s
       retries: 12
-
-volumes:
-  postgres_data:
-  redis_data:
-  license_identity:
-  license_sync_state:
-  license_lease:
-  config_uploads:
-  config_logs:
-  user_logs:
-  media_logs:
-  gateway_logs:

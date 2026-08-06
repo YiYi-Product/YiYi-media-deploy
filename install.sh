@@ -118,6 +118,93 @@ set_env_value .env YIYI_SERVER_HOST "$server_host"
 set_env_value .env YIYI_PUBLIC_HOST "$public_host"
 set_env_value .env YIYI_ADVERTISE_HOST "$server_host"
 
+data_mount_specs=()
+postgres_data_existing=false
+
+register_data_mount() {
+  local service="$1" destination="$2" relative="$3" mode="$4" owner="${5:-}" target
+  target="$data_dir/$relative"
+  mkdir -p "$target"
+  chmod "$mode" "$target"
+  if [[ -n "$owner" ]]; then
+    if [[ "$installed" == false ]]; then
+      chown -R "$owner" "$target"
+    else
+      chown "$owner" "$target"
+    fi
+  fi
+  data_mount_specs+=("$service|$destination|$target")
+}
+
+configure_data_dir() {
+  local configured
+  configured="$(env_value .env YIYI_DATA_DIR)"
+  if [[ -z "$configured" ]]; then
+    configured="$DEPLOY_DIR/data"
+  elif [[ "$configured" != /* ]]; then
+    configured="$DEPLOY_DIR/$configured"
+  fi
+  configured="$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$configured")"
+  data_dir="$configured"
+  postgres_data_dir="$data_dir/postgres"
+  set_env_value .env YIYI_DATA_DIR "$data_dir"
+
+  mkdir -p "$data_dir"
+  case "$role" in
+    single)
+      register_data_mount postgres /var/lib/postgresql/data postgres 0700
+      register_data_mount redis /data redis 0750
+      register_data_mount license-agent /var/lib/yiyi-license license/identity 0700 10001
+      register_data_mount license-agent /var/run/yiyi-license license/lease 0700 10001
+      register_data_mount config /data/uploads config/uploads 0750 10001
+      register_data_mount config /data/logs logs/config 0750 10001
+      register_data_mount user /data/logs logs/user 0750
+      register_data_mount media /data/logs logs/media 0750
+      register_data_mount gateway /data/logs logs/gateway 0750
+      ;;
+    control)
+      register_data_mount postgres /var/lib/postgresql/data postgres 0700
+      register_data_mount redis /data redis 0750
+      register_data_mount license-agent /var/lib/yiyi-license license/identity 0700 10001
+      register_data_mount license-agent /var/run/yiyi-license license/lease 0700 10001
+      register_data_mount config /data/uploads config/uploads 0750 10001
+      register_data_mount config /data/logs logs/config 0750 10001
+      ;;
+    user)
+      register_data_mount license-sync /var/lib/yiyi-license-sync license/sync-state 0700 10001
+      register_data_mount license-sync /var/run/yiyi-license license/lease 0700 10001
+      register_data_mount user /data/logs logs/user 0750
+      ;;
+    media)
+      register_data_mount license-sync /var/lib/yiyi-license-sync license/sync-state 0700 10001
+      register_data_mount license-sync /var/run/yiyi-license license/lease 0700 10001
+      register_data_mount media /data/logs logs/media 0750
+      ;;
+    edge)
+      register_data_mount license-sync /var/lib/yiyi-license-sync license/sync-state 0700 10001
+      register_data_mount license-sync /var/run/yiyi-license license/lease 0700 10001
+      register_data_mount gateway /data/logs logs/gateway 0750
+      ;;
+  esac
+}
+
+validate_postgres_data_dir() {
+  local version
+  if [[ -f "$postgres_data_dir/PG_VERSION" ]]; then
+    version="$(tr -d '[:space:]' < "$postgres_data_dir/PG_VERSION")"
+    [[ "$version" == "16" ]] || {
+      echo "PostgreSQL 数据目录版本为 $version，当前镜像只支持版本 16：$postgres_data_dir" >&2
+      return 1
+    }
+    postgres_data_existing=true
+  elif [[ -n "$(find "$postgres_data_dir" -mindepth 1 -print -quit)" ]]; then
+    echo "PostgreSQL 数据目录非空但缺少 PG_VERSION：$postgres_data_dir" >&2
+    return 1
+  fi
+}
+
+configure_data_dir
+
 generate_secret_if_needed() {
   local key="$1" value
   value="$(env_value .env "$key")"
@@ -149,8 +236,16 @@ generate_relay_certificate() {
 }
 
 if [[ "$role" == "single" || "$role" == "control" ]]; then
+  validate_postgres_data_dir
   db_user="$(env_value .env YIYI_DB_USER)"
   set_env_value .env YIYI_DB_USER "${db_user:-yiyi}"
+  if [[ "$postgres_data_existing" == true ]]; then
+    db_password="$(env_value .env YIYI_DB_PASSWORD)"
+    if [[ -z "$db_password" || "$db_password" == "GENERATE_ON_INSTALL" ]]; then
+      echo "检测到已有 PostgreSQL 数据，请在 .env 中填写该数据库原有的 YIYI_DB_PASSWORD" >&2
+      exit 1
+    fi
+  fi
   generate_secret_if_needed YIYI_DB_PASSWORD
   generate_secret_if_needed YIYI_REDIS_PASSWORD
   generate_secret_if_needed YIYI_SERVICE_TOKEN
@@ -249,6 +344,76 @@ create_backup() {
   echo "升级前备份已生成：$target"
 }
 
+migrate_legacy_named_volumes() {
+  local spec service destination target container_id mount_info mount_type mount_name
+  local migration_dir version index
+  local -a container_ids=() destinations=() targets=() volume_names=() migration_dirs=()
+  [[ "$installed" == true ]] || return 0
+
+  for spec in "${data_mount_specs[@]}"; do
+    IFS='|' read -r service destination target <<< "$spec"
+    container_id="$(compose ps -a -q "$service")"
+    [[ -n "$container_id" ]] || continue
+    mount_info="$(docker inspect --format '{{json .Mounts}}' "$container_id" | python3 -c '
+import json, sys
+destination = sys.argv[1]
+for mount in json.load(sys.stdin):
+    if mount.get("Destination") == destination:
+        print(f"{mount.get('"'"'Type'"'"', '')}|{mount.get('"'"'Name'"'"', '')}")
+        break
+' "$destination")"
+    IFS='|' read -r mount_type mount_name <<< "$mount_info"
+    [[ "$mount_type" == "volume" ]] || continue
+    if [[ -n "$(find "$target" -mindepth 1 -print -quit)" ]]; then
+      if [[ -f .named-volumes-migrated ]] && grep -Fxq "$mount_name" .named-volumes-migrated; then
+        continue
+      fi
+      echo "目标数据目录已有内容，不能自动覆盖旧命名卷 $mount_name：$target" >&2
+      return 1
+    fi
+    container_ids+=("$container_id")
+    destinations+=("$destination")
+    targets+=("$target")
+    volume_names+=("$mount_name")
+  done
+
+  [[ ${#container_ids[@]} -gt 0 ]] || return 0
+  echo "检测到 ${#container_ids[@]} 个旧数据卷，正在迁移到 $data_dir"
+  compose stop
+
+  for ((index=0; index<${#container_ids[@]}; index++)); do
+    migration_dir="$(mktemp -d "${targets[$index]}.migrate.XXXXXX")"
+    chmod 0700 "$migration_dir"
+    migration_dirs+=("$migration_dir")
+    if ! docker cp -a "${container_ids[$index]}:${destinations[$index]}/." "$migration_dir"; then
+      echo "复制旧命名卷 ${volume_names[$index]} 失败；临时目录保留在 $migration_dir" >&2
+      compose start || true
+      return 1
+    fi
+    if [[ "${destinations[$index]}" == "/var/lib/postgresql/data" ]]; then
+      [[ -f "$migration_dir/PG_VERSION" ]] || {
+        echo "旧 PostgreSQL 数据缺少 PG_VERSION，正在恢复原服务" >&2
+        compose start || true
+        return 1
+      }
+      version="$(tr -d '[:space:]' < "$migration_dir/PG_VERSION")"
+      [[ "$version" == "16" ]] || {
+        echo "旧 PostgreSQL 数据版本为 $version，当前镜像只支持版本 16，正在恢复原服务" >&2
+        compose start || true
+        return 1
+      }
+    fi
+  done
+
+  for ((index=0; index<${#targets[@]}; index++)); do
+    rmdir "${targets[$index]}"
+    mv "${migration_dirs[$index]}" "${targets[$index]}"
+  done
+  printf '%s\n' "${volume_names[@]}" > .named-volumes-migrated
+  chmod 0600 .named-volumes-migrated
+  echo "旧数据卷迁移完成；原命名卷均已保留，可用于回退。"
+}
+
 export_join() {
   umask 077
   {
@@ -304,11 +469,15 @@ fi
 sync_license_public_key
 preflight
 
+compose pull
+
 if [[ "$installed" == true && ( "$role" == "single" || "$role" == "control" ) ]]; then
   create_backup
 fi
+if [[ "$installed" == true ]]; then
+  migrate_legacy_named_volumes
+fi
 
-compose pull
 compose up -d --remove-orphans --wait --wait-timeout 300
 healthcheck
 
