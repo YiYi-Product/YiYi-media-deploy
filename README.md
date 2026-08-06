@@ -139,12 +139,18 @@ Storage 和 Play 节点仍然在网页“节点管理”中创建和部署。
 
 ## 升级
 
-安装和升级使用同一个命令。已安装环境会自动拉取部署仓库更新、
-备份主控数据、拉取所有 YiYi 镜像的 `latest` 版本并执行健康检查：
+升级前请根据自身备份策略备份 `data` 目录或数据库。拉取新镜像后必须重新创建
+容器，单独执行 `docker compose pull` 不会让运行中的容器切换到新镜像：
 
 ```bash
-sudo ./install.sh
+cd /opt/YiYi-media-deploy
+docker compose pull
+docker compose up -d --remove-orphans --wait
+docker compose ps
 ```
+
+需要更新部署文件时，先执行 `git pull --ff-only`，再执行上述命令。安装脚本不再
+自动生成升级备份，数据备份和保留周期由用户自行管理。
 
 首次授权和后续授权状态均在网页中处理，不需要命令行激活。
 端口和安全说明见 [OPERATIONS.md](OPERATIONS.md)。

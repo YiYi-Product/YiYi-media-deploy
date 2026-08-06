@@ -327,24 +327,6 @@ preflight() {
   compose config -q
 }
 
-create_backup() {
-  local timestamp target
-  timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  target="$DEPLOY_DIR/backups/$timestamp"
-  mkdir -p "$target"
-  umask 077
-  compose exec -T postgres sh -c 'pg_dumpall --clean --if-exists -U "$POSTGRES_USER"' > "$target/postgres.sql"
-  compose cp config:/data/uploads/. "$target/config-uploads" >/dev/null 2>&1 || true
-  compose cp license-agent:/var/lib/yiyi-license/. "$target/license-identity" >/dev/null
-  cp .env "$target/runtime.env"
-  cp .role "$target/role"
-  cp config/license-public.runtime.jwk "$target/license-public.jwk"
-  cp config/cluster-relay.crt "$target/cluster-relay.crt"
-  cp config/cluster-relay.key "$target/cluster-relay.key"
-  chmod -R go-rwx "$target"
-  echo "升级前备份已生成：$target"
-}
-
 migrate_legacy_named_volumes() {
   local spec service destination target container_id mount_info mount_type mount_name
   local migration_dir version index
@@ -472,9 +454,6 @@ preflight
 
 compose pull
 
-if [[ "$installed" == true && ( "$role" == "single" || "$role" == "control" ) ]]; then
-  create_backup
-fi
 if [[ "$installed" == true ]]; then
   migrate_legacy_named_volumes
 fi
