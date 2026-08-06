@@ -21,6 +21,7 @@ for tool in docker openssl curl python3; do
 done
 docker compose version >/dev/null 2>&1 || { echo "需要 Docker Compose v2" >&2; exit 1; }
 docker info >/dev/null 2>&1 || { echo "Docker daemon 不可用" >&2; exit 1; }
+install -d -m 0700 "$DEPLOY_DIR/config"
 
 env_value() {
   local file="$1" key="$2"
@@ -128,12 +129,20 @@ generate_secret_if_needed() {
 generate_relay_certificate() {
   local cert="$DEPLOY_DIR/config/cluster-relay.crt"
   local key="$DEPLOY_DIR/config/cluster-relay.key"
-  local san
+  local cert_temp key_temp san
   [[ -s "$cert" && -s "$key" ]] && return
   if [[ "$server_host" =~ ^[0-9a-fA-F:.]+$ ]]; then san="IP:$server_host"; else san="DNS:$server_host"; fi
-  openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 825 \
-    -keyout "$key" -out "$cert" -subj "/CN=$server_host" \
-    -addext "subjectAltName=$san" >/dev/null 2>&1
+  cert_temp="$(mktemp "$DEPLOY_DIR/config/cluster-relay.crt.XXXXXX")"
+  key_temp="$(mktemp "$DEPLOY_DIR/config/cluster-relay.key.XXXXXX")"
+  if ! openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 825 \
+      -keyout "$key_temp" -out "$cert_temp" -subj "/CN=$server_host" \
+      -addext "subjectAltName=$san" >/dev/null 2>&1; then
+    rm -f "$cert_temp" "$key_temp"
+    echo "生成集群同步证书失败，请检查 OpenSSL 和服务器地址：$server_host" >&2
+    return 1
+  fi
+  mv "$cert_temp" "$cert"
+  mv "$key_temp" "$key"
   chown 10001 "$key"
   chmod 0600 "$key"
   chmod 0644 "$cert"
@@ -203,7 +212,7 @@ sys.stdout.write("\n")
 }
 
 preflight() {
-  if grep -Eq 'GENERATE_ON_INSTALL|example\.invalid' .env; then
+  if grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=.*(GENERATE_ON_INSTALL|example\.invalid)' .env; then
     echo "配置仍包含占位值" >&2
     return 1
   fi
