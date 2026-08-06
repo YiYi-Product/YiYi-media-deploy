@@ -50,8 +50,10 @@ YIYI_DATA_DIR=/var/lib/yiyi
 ```
 
 若 `data/postgres` 已包含 PostgreSQL 16 数据，安装脚本会直接使用；此时必须在
-`.env` 中填写原数据库的 `YIYI_DB_USER` 和 `YIYI_DB_PASSWORD`。旧版安装使用的
-全部 Docker 命名卷会在首次升级时统一迁移，迁移完成后仍保留原卷以便回退。
+`.env` 中填写原数据库的 `YIYI_DB_USER`、`YIYI_DB_PASSWORD` 和原部署的
+`YIYI_SERVICE_TOKEN`。全局 service token 不保存在 `data` 目录；恢复旧数据库时
+若静默生成新值，现有 Storage/Play 节点将无法通过服务鉴权。旧版安装使用的全部
+Docker 命名卷会在首次升级时统一迁移，迁移完成后仍保留原卷以便回退。
 
 然后执行：
 

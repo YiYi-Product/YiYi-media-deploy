@@ -246,6 +246,12 @@ if [[ "$role" == "single" || "$role" == "control" ]]; then
       echo "检测到已有 PostgreSQL 数据，请在 .env 中填写该数据库原有的 YIYI_DB_PASSWORD" >&2
       exit 1
     fi
+    service_token="$(env_value .env YIYI_SERVICE_TOKEN)"
+    if [[ -z "$service_token" || "$service_token" == "GENERATE_ON_INSTALL" ]]; then
+      echo "检测到已有 PostgreSQL 数据，请在 .env 中填写原部署的 YIYI_SERVICE_TOKEN" >&2
+      echo "该 token 不保存在 data 目录；静默生成新值会导致现有 Storage/Play 节点鉴权失败" >&2
+      exit 1
+    fi
   fi
   generate_secret_if_needed YIYI_DB_PASSWORD
   generate_secret_if_needed YIYI_REDIS_PASSWORD
