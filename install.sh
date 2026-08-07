@@ -97,31 +97,80 @@ if [[ "$installed" == true && -d .git && "${YIYI_INSTALL_REEXEC:-0}" != "1" ]]; 
   fi
 fi
 
-profile_args=(--profile "$role")
-compose() {
-  docker compose --env-file "$DEPLOY_DIR/.env" -f "$DEPLOY_DIR/compose.yaml" "${profile_args[@]}" "$@"
-}
-
 cluster_keys=(
   YIYI_DB_HOST YIYI_REDIS_HOST YIYI_CONFIG_HOST YIYI_USER_HOST
   YIYI_DB_USER YIYI_DB_PASSWORD YIYI_REDIS_PASSWORD YIYI_SERVICE_TOKEN
   YIYI_LICENSE_CLUSTER_TOKEN YIYI_LICENSE_SERVER_URL
   YIYI_LICENSE_SYNC_URL
 )
+cluster_optional_keys=(YIYI_DB_MODE YIYI_DB_PORT)
 
-if [[ "$role" != "single" && "$role" != "control" && "$installed" == false ]]; then
-  [[ -s join.env ]] || { echo "$role 角色缺少 $DEPLOY_DIR/join.env" >&2; exit 1; }
-  [[ -s cluster-relay.crt ]] || { echo "$role 角色缺少 $DEPLOY_DIR/cluster-relay.crt" >&2; exit 1; }
-  copy_env_keys join.env .env "${cluster_keys[@]}"
-  cp cluster-relay.crt config/cluster-relay.crt
-  chmod 0644 config/cluster-relay.crt
+if [[ "$role" != "single" && "$role" != "control" ]]; then
+  if [[ "$installed" == false ]]; then
+    [[ -s join.env ]] || { echo "$role 角色缺少 $DEPLOY_DIR/join.env" >&2; exit 1; }
+  fi
+  if [[ -s join.env ]]; then
+    [[ -s cluster-relay.crt ]] || { echo "$role 角色缺少 $DEPLOY_DIR/cluster-relay.crt" >&2; exit 1; }
+    copy_env_keys join.env .env "${cluster_keys[@]}"
+    for key in "${cluster_optional_keys[@]}"; do
+      if grep -q "^${key}=" join.env; then
+        set_env_value .env "$key" "$(env_value join.env "$key")"
+      fi
+    done
+    cp cluster-relay.crt config/cluster-relay.crt
+    chmod 0644 config/cluster-relay.crt
+  fi
 fi
 
 set_env_value .env YIYI_DEPLOY_ROLE "$role"
-set_env_value .env COMPOSE_PROFILES "$role"
 set_env_value .env YIYI_SERVER_HOST "$server_host"
 set_env_value .env YIYI_PUBLIC_HOST "$public_host"
 set_env_value .env YIYI_ADVERTISE_HOST "$server_host"
+
+db_mode="$(env_value .env YIYI_DB_MODE)"
+db_mode="${db_mode:-bundled}"
+case "$db_mode" in
+  bundled|external) ;;
+  *) echo "YIYI_DB_MODE 只支持 bundled 或 external" >&2; exit 1 ;;
+esac
+db_port="$(env_value .env YIYI_DB_PORT)"
+db_port="${db_port:-5432}"
+[[ "$db_port" =~ ^[0-9]+$ ]] && ((db_port >= 1 && db_port <= 65535)) || {
+  echo "YIYI_DB_PORT 必须是 1-65535 之间的端口" >&2
+  exit 1
+}
+set_env_value .env YIYI_DB_MODE "$db_mode"
+set_env_value .env YIYI_DB_PORT "$db_port"
+
+if [[ ("$role" == "single" || "$role" == "control") && "$db_mode" == "external" ]]; then
+  db_host="$(env_value .env YIYI_DB_HOST)"
+  [[ "$db_host" =~ ^[0-9A-Za-z._-]+$ ]] || {
+    echo "external 模式必须填写不带协议和端口的 YIYI_DB_HOST" >&2
+    exit 1
+  }
+  db_user="$(env_value .env YIYI_DB_USER)"
+  [[ -n "$db_user" ]] || {
+    echo "external 模式必须填写外部 PostgreSQL 的 YIYI_DB_USER" >&2
+    exit 1
+  }
+  db_password="$(env_value .env YIYI_DB_PASSWORD)"
+  [[ -n "$db_password" && "$db_password" != "GENERATE_ON_INSTALL" ]] || {
+    echo "external 模式必须填写外部 PostgreSQL 的 YIYI_DB_PASSWORD" >&2
+    exit 1
+  }
+fi
+
+profile_args=(--profile "$role")
+postgres_replicas=1
+if [[ ("$role" == "single" || "$role" == "control") && "$db_mode" == "external" ]]; then
+  postgres_replicas=0
+fi
+set_env_value .env COMPOSE_PROFILES "$role"
+set_env_value .env YIYI_POSTGRES_REPLICAS "$postgres_replicas"
+
+compose() {
+  docker compose --env-file "$DEPLOY_DIR/.env" -f "$DEPLOY_DIR/compose.yaml" "${profile_args[@]}" "$@"
+}
 
 data_mount_specs=()
 postgres_data_existing=false
@@ -157,7 +206,9 @@ configure_data_dir() {
   mkdir -p "$data_dir"
   case "$role" in
     single)
-      register_data_mount postgres /var/lib/postgresql/data postgres 0700
+      if [[ "$db_mode" == "bundled" ]]; then
+        register_data_mount postgres /var/lib/postgresql/data postgres 0700
+      fi
       register_data_mount redis /data redis 0750
       register_data_mount license-agent /var/lib/yiyi-license license/identity 0700 10001
       register_data_mount license-agent /var/run/yiyi-license license/lease 0700 10001
@@ -168,7 +219,9 @@ configure_data_dir() {
       register_data_mount gateway /data/logs logs/gateway 0750
       ;;
     control)
-      register_data_mount postgres /var/lib/postgresql/data postgres 0700
+      if [[ "$db_mode" == "bundled" ]]; then
+        register_data_mount postgres /var/lib/postgresql/data postgres 0700
+      fi
       register_data_mount redis /data redis 0750
       register_data_mount license-agent /var/lib/yiyi-license license/identity 0700 10001
       register_data_mount license-agent /var/run/yiyi-license license/lease 0700 10001
@@ -249,23 +302,25 @@ generate_relay_certificate() {
 }
 
 if [[ "$role" == "single" || "$role" == "control" ]]; then
-  validate_postgres_data_dir
-  db_user="$(env_value .env YIYI_DB_USER)"
-  set_env_value .env YIYI_DB_USER "${db_user:-yiyi}"
-  if [[ "$postgres_data_existing" == true ]]; then
-    db_password="$(env_value .env YIYI_DB_PASSWORD)"
-    if [[ -z "$db_password" || "$db_password" == "GENERATE_ON_INSTALL" ]]; then
-      echo "检测到已有 PostgreSQL 数据，请在 .env 中填写该数据库原有的 YIYI_DB_PASSWORD" >&2
-      exit 1
+  if [[ "$db_mode" == "bundled" ]]; then
+    validate_postgres_data_dir
+    db_user="$(env_value .env YIYI_DB_USER)"
+    set_env_value .env YIYI_DB_USER "${db_user:-yiyi}"
+    if [[ "$postgres_data_existing" == true ]]; then
+      db_password="$(env_value .env YIYI_DB_PASSWORD)"
+      if [[ -z "$db_password" || "$db_password" == "GENERATE_ON_INSTALL" ]]; then
+        echo "检测到已有 PostgreSQL 数据，请在 .env 中填写该数据库原有的 YIYI_DB_PASSWORD" >&2
+        exit 1
+      fi
+      service_token="$(env_value .env YIYI_SERVICE_TOKEN)"
+      if [[ -z "$service_token" || "$service_token" == "GENERATE_ON_INSTALL" ]]; then
+        echo "检测到已有 PostgreSQL 数据，请在 .env 中填写原部署的 YIYI_SERVICE_TOKEN" >&2
+        echo "该 token 不保存在 data 目录；静默生成新值会导致现有 Storage/Play 节点鉴权失败" >&2
+        exit 1
+      fi
     fi
-    service_token="$(env_value .env YIYI_SERVICE_TOKEN)"
-    if [[ -z "$service_token" || "$service_token" == "GENERATE_ON_INSTALL" ]]; then
-      echo "检测到已有 PostgreSQL 数据，请在 .env 中填写原部署的 YIYI_SERVICE_TOKEN" >&2
-      echo "该 token 不保存在 data 目录；静默生成新值会导致现有 Storage/Play 节点鉴权失败" >&2
-      exit 1
-    fi
+    generate_secret_if_needed YIYI_DB_PASSWORD
   fi
-  generate_secret_if_needed YIYI_DB_PASSWORD
   generate_optional_secret_if_requested YIYI_REDIS_PASSWORD
   generate_secret_if_needed YIYI_SERVICE_TOKEN
   generate_secret_if_needed YIYI_LICENSE_CLUSTER_TOKEN
@@ -273,7 +328,9 @@ if [[ "$role" == "single" || "$role" == "control" ]]; then
 fi
 
 if [[ "$role" == "single" ]]; then
-  set_env_value .env YIYI_DB_HOST 127.0.0.1
+  if [[ "$db_mode" == "bundled" ]]; then
+    set_env_value .env YIYI_DB_HOST 127.0.0.1
+  fi
   set_env_value .env YIYI_REDIS_HOST 127.0.0.1
   set_env_value .env YIYI_CONFIG_HOST 127.0.0.1
   set_env_value .env YIYI_USER_HOST 127.0.0.1
@@ -282,7 +339,9 @@ if [[ "$role" == "single" ]]; then
 elif [[ "$role" == "control" ]]; then
   user_host="$(env_value .env YIYI_USER_HOST)"
   [[ "$user_host" =~ ^[0-9A-Za-z._-]+$ ]] || { echo "Control 角色必须填写 YIYI_USER_HOST" >&2; exit 1; }
-  set_env_value .env YIYI_DB_HOST "$server_host"
+  if [[ "$db_mode" == "bundled" ]]; then
+    set_env_value .env YIYI_DB_HOST "$server_host"
+  fi
   set_env_value .env YIYI_REDIS_HOST "$server_host"
   set_env_value .env YIYI_CONFIG_HOST "$server_host"
   set_env_value .env YIYI_INFRA_BIND_HOST "$server_host"
@@ -331,7 +390,7 @@ preflight() {
     return 1
   fi
   local key value cluster_token
-  for key in YIYI_SERVER_HOST YIYI_ADVERTISE_HOST YIYI_DB_PASSWORD YIYI_SERVICE_TOKEN YIYI_LICENSE_CLUSTER_TOKEN; do
+  for key in YIYI_SERVER_HOST YIYI_ADVERTISE_HOST YIYI_DB_HOST YIYI_DB_PORT YIYI_DB_USER YIYI_DB_PASSWORD YIYI_SERVICE_TOKEN YIYI_LICENSE_CLUSTER_TOKEN; do
     value="$(env_value .env "$key")"
     [[ -n "$value" && "$value" != REPLACE_* ]] || { echo "缺少 $key" >&2; return 1; }
   done
@@ -420,7 +479,7 @@ export_join() {
   {
     echo "# YiYi 集群加入配置；导入后应删除。"
     local key
-    for key in "${cluster_keys[@]}"; do
+    for key in "${cluster_keys[@]}" "${cluster_optional_keys[@]}"; do
       printf '%s=%s\n' "$key" "$(env_value .env "$key")"
     done
   } > join.env

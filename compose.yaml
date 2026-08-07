@@ -11,6 +11,9 @@ services:
     profiles: ["single", "control"]
     image: postgres:16.4
     restart: unless-stopped
+    deploy:
+      # external 模式下安装脚本写入 0；旧部署未设置时保持 1，避免升级时误停数据库。
+      replicas: ${YIYI_POSTGRES_REPLICAS:-1}
     environment:
       POSTGRES_USER: ${YIYI_DB_USER:?请设置 YIYI_DB_USER}
       POSTGRES_PASSWORD: ${YIYI_DB_PASSWORD:?请设置 YIYI_DB_PASSWORD}
