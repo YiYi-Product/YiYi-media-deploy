@@ -28,8 +28,9 @@ YIYI_SERVER_HOST=<服务器IP或域名>
 ```
 
 只有公网访问地址与服务器地址不同时，才需要填写 `YIYI_PUBLIC_HOST`。
-`YIYI_DB_USER`、`YIYI_DB_PASSWORD` 和 `YIYI_REDIS_PASSWORD` 已在模板中保留；
-密码保持 `GENERATE_ON_INSTALL` 即可由脚本自动生成，也可以在安装前自行设置。
+`YIYI_DB_USER`、`YIYI_DB_PASSWORD` 和 `YIYI_REDIS_PASSWORD` 已在模板中保留。
+数据库密码保持 `GENERATE_ON_INSTALL` 即可由脚本自动生成，也可以在安装前自行设置。
+Redis 密码留空表示不启用密码；也可以自行设置，或填写 `GENERATE_ON_INSTALL` 让脚本自动生成。
 
 所有持久化数据默认保存在部署目录下的 `data`，包括 PostgreSQL、Redis、上传文件、
 许可证运行状态和服务日志。主要目录如下：

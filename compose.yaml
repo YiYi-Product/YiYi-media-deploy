@@ -32,9 +32,16 @@ services:
     profiles: ["single", "control"]
     image: redis:7.4-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${YIYI_REDIS_PASSWORD:?请设置 Redis 密码}"]
+    command:
+      - sh
+      - -ec
+      - |
+        if [ -n "$$REDIS_PASSWORD" ]; then
+          exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"
+        fi
+        exec redis-server --appendonly yes
     environment:
-      REDIS_PASSWORD: ${YIYI_REDIS_PASSWORD}
+      REDIS_PASSWORD: ${YIYI_REDIS_PASSWORD:-}
     volumes:
       - type: bind
         source: ${YIYI_DATA_DIR:-./data}/redis
@@ -42,7 +49,7 @@ services:
     ports:
       - "${YIYI_INFRA_BIND_HOST:-127.0.0.1}:${YIYI_REDIS_PORT:-6379}:6379"
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping 2>/dev/null | grep -q PONG"]
+      test: ["CMD-SHELL", "if [ -n \"$${REDIS_PASSWORD}\" ]; then redis-cli -a \"$${REDIS_PASSWORD}\" ping 2>/dev/null; else redis-cli ping; fi | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -160,7 +167,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${YIYI_DB_PASSWORD}
       REDIS_HOST: ${YIYI_REDIS_HOST:-127.0.0.1}
       REDIS_PORT: ${YIYI_REDIS_PORT:-6379}
-      REDIS_PASSWORD: ${YIYI_REDIS_PASSWORD}
+      REDIS_PASSWORD: ${YIYI_REDIS_PASSWORD:-}
       USER_REGISTRY_CONFIG_SERVER: http://${YIYI_CONFIG_HOST:-127.0.0.1}:18085
       USER_REGISTRY_HOST: ${YIYI_ADVERTISE_HOST:?请设置本机可达地址}
       USER_REGISTRY_IP: ${YIYI_ADVERTISE_HOST}
@@ -200,7 +207,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${YIYI_DB_PASSWORD}
       REDIS_HOST: ${YIYI_REDIS_HOST:-127.0.0.1}
       REDIS_PORT: ${YIYI_REDIS_PORT:-6379}
-      REDIS_PASSWORD: ${YIYI_REDIS_PASSWORD}
+      REDIS_PASSWORD: ${YIYI_REDIS_PASSWORD:-}
       MEDIA_CONFIG_SERVER_URL: http://${YIYI_CONFIG_HOST:-127.0.0.1}:18085
       MEDIA_REGISTRY_HOST: ${YIYI_ADVERTISE_HOST:?请设置本机可达地址}
       MEDIA_REGISTRY_IP: ${YIYI_ADVERTISE_HOST}

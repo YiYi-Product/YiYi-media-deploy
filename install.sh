@@ -51,8 +51,12 @@ copy_env_keys() {
   local source_file="$1" target_file="$2" key value
   shift 2
   for key in "$@"; do
+    grep -q "^${key}=" "$source_file" || { echo "$source_file 缺少 $key" >&2; return 1; }
     value="$(env_value "$source_file" "$key")"
-    [[ -n "$value" ]] || { echo "$source_file 缺少 $key" >&2; return 1; }
+    if [[ "$key" != "YIYI_REDIS_PASSWORD" && -z "$value" ]]; then
+      echo "$source_file 缺少 $key" >&2
+      return 1
+    fi
     set_env_value "$target_file" "$key" "$value"
   done
 }
@@ -214,6 +218,14 @@ generate_secret_if_needed() {
   fi
 }
 
+generate_optional_secret_if_requested() {
+  local key="$1" value
+  value="$(env_value .env "$key")"
+  if [[ "$value" == "GENERATE_ON_INSTALL" ]]; then
+    set_env_value .env "$key" "$(openssl rand -hex 32)"
+  fi
+}
+
 generate_relay_certificate() {
   local cert="$DEPLOY_DIR/config/cluster-relay.crt"
   local key="$DEPLOY_DIR/config/cluster-relay.key"
@@ -254,7 +266,7 @@ if [[ "$role" == "single" || "$role" == "control" ]]; then
     fi
   fi
   generate_secret_if_needed YIYI_DB_PASSWORD
-  generate_secret_if_needed YIYI_REDIS_PASSWORD
+  generate_optional_secret_if_requested YIYI_REDIS_PASSWORD
   generate_secret_if_needed YIYI_SERVICE_TOKEN
   generate_secret_if_needed YIYI_LICENSE_CLUSTER_TOKEN
   generate_relay_certificate
@@ -319,7 +331,7 @@ preflight() {
     return 1
   fi
   local key value cluster_token
-  for key in YIYI_SERVER_HOST YIYI_ADVERTISE_HOST YIYI_DB_PASSWORD YIYI_REDIS_PASSWORD YIYI_SERVICE_TOKEN YIYI_LICENSE_CLUSTER_TOKEN; do
+  for key in YIYI_SERVER_HOST YIYI_ADVERTISE_HOST YIYI_DB_PASSWORD YIYI_SERVICE_TOKEN YIYI_LICENSE_CLUSTER_TOKEN; do
     value="$(env_value .env "$key")"
     [[ -n "$value" && "$value" != REPLACE_* ]] || { echo "缺少 $key" >&2; return 1; }
   done
