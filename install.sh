@@ -477,7 +477,7 @@ for mount in json.load(sys.stdin):
 export_join() {
   umask 077
   {
-    echo "# YiYi 集群加入配置；导入后应删除。"
+    echo "# YiYi Media 集群加入配置；导入后应删除。"
     local key
     for key in "${cluster_keys[@]}" "${cluster_optional_keys[@]}"; do
       printf '%s=%s\n' "$key" "$(env_value .env "$key")"

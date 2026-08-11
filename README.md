@@ -1,6 +1,6 @@
-# YiYi Docker 部署
+# YiYi Media Docker 部署
 
-本仓库用于部署 YiYi，支持单台服务器和多台服务器。
+本仓库用于部署 YiYi Media 项目，支持单台服务器和多台服务器。
 
 ## 准备工作
 
@@ -93,7 +93,7 @@ http://<服务器IP或域名>:18080
 
 ## 部署 Storage 和 Play 节点
 
-Storage 和 Play 节点不由本部署包安装。用户登录 YiYi 后进入“节点管理”，
+Storage 和 Play 节点不由本部署包安装。用户登录 YiYi Media 后进入“节点管理”，
 创建节点并按页面引导自助部署即可。
 
 ## 多服务器部署

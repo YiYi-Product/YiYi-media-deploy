@@ -1,4 +1,4 @@
-# YiYi 运维说明
+# YiYi Media 运维说明
 
 ## 安装
 
@@ -35,7 +35,7 @@ docker compose ps
 `docker compose pull` 只下载镜像，不会更新正在运行的容器。需要更新部署文件时，
 先执行 `git pull --ff-only`。
 
-授权激活、节点创建和授权状态管理均在 YiYi 网页中完成。
+授权激活、节点创建和授权状态管理均在 YiYi Media 网页中完成。
 
 ## 网络端口
 
