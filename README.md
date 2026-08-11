@@ -4,7 +4,7 @@
 
 ## 准备工作
 
-- 一台或多台 64 位 Linux 服务器
+- 一台或多台 Linux 服务器
 - Docker 和 Docker Compose v2
 - 服务器 IP 或已解析的域名
 
