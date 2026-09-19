@@ -59,7 +59,7 @@ services:
 
   license-agent:
     profiles: ["single", "control"]
-    image: ghcr.io/yiyi-product/yiyi-media-license-agent:latest
+    image: ghcr.io/yiyi-product/yiyi-media-license-agent:${YIYI_IMAGE_TAG:-latest}
     restart: unless-stopped
     network_mode: host
     environment:
@@ -93,7 +93,7 @@ services:
 
   license-sync:
     profiles: ["user", "media", "edge"]
-    image: ghcr.io/yiyi-product/yiyi-media-license-agent:latest
+    image: ghcr.io/yiyi-product/yiyi-media-license-agent:${YIYI_IMAGE_TAG:-latest}
     restart: unless-stopped
     network_mode: host
     environment:
@@ -122,7 +122,7 @@ services:
 
   config:
     profiles: ["single", "control"]
-    image: ghcr.io/yiyi-product/yiyi-media-config:latest
+    image: ghcr.io/yiyi-product/yiyi-media-config:${YIYI_IMAGE_TAG:-latest}
     restart: unless-stopped
     network_mode: host
     environment:
@@ -159,7 +159,7 @@ services:
 
   user:
     profiles: ["single", "user"]
-    image: ghcr.io/yiyi-product/yiyi-media-user:latest
+    image: ghcr.io/yiyi-product/yiyi-media-user:${YIYI_IMAGE_TAG:-latest}
     restart: unless-stopped
     network_mode: host
     environment:
@@ -199,7 +199,7 @@ services:
 
   media:
     profiles: ["single", "media"]
-    image: ghcr.io/yiyi-product/yiyi-media-media:latest
+    image: ghcr.io/yiyi-product/yiyi-media-media:${YIYI_IMAGE_TAG:-latest}
     restart: unless-stopped
     network_mode: host
     environment:
@@ -234,7 +234,7 @@ services:
 
   gateway:
     profiles: ["single", "edge"]
-    image: ghcr.io/yiyi-product/yiyi-media-gateway:latest
+    image: ghcr.io/yiyi-product/yiyi-media-gateway:${YIYI_IMAGE_TAG:-latest}
     restart: unless-stopped
     network_mode: host
     environment:
@@ -266,7 +266,7 @@ services:
 
   frontend:
     profiles: ["single", "edge"]
-    image: ghcr.io/yiyi-product/yiyi-media-frontend:latest
+    image: ghcr.io/yiyi-product/yiyi-media-frontend:${YIYI_IMAGE_TAG:-latest}
     restart: unless-stopped
     network_mode: host
     healthcheck:

@@ -87,14 +87,20 @@ if [[ -s .role ]]; then
   }
 fi
 
-if [[ "$installed" == true && -d .git && "${YIYI_INSTALL_REEXEC:-0}" != "1" ]]; then
-  old_head="$(git rev-parse HEAD)"
-  git pull --ff-only
-  new_head="$(git rev-parse HEAD)"
-  if [[ "$old_head" != "$new_head" ]]; then
-    export YIYI_INSTALL_REEXEC=1
-    exec "$DEPLOY_DIR/install.sh"
+# 这里**不再**自动 `git pull`。
+#
+# 旧版本在已安装环境会先拉取远端最新代码、再以 root 重新执行安装脚本。
+# 那等于"执行一次 ./install.sh 就同意运行远端当前任意代码"：
+# 一旦远端仓库或推送凭据被攻破，攻击者无需接触本机即可取得 root 执行权。
+#
+# 文档化的升级流程本来就要求先手动 `git pull --ff-only` 再执行本脚本
+# （见 README「升级」与 OPERATIONS），因此自动拉取只是多余的高风险行为。
+# 现改为显式提示，由操作者自行决定何时更新代码。
+if [[ "$installed" == true && -d .git ]]; then
+  if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+    echo "提示：部署目录存在未提交的本地改动，升级前请自行确认。" >&2
   fi
+  echo "提示：如需升级部署文件，请先手动执行 git pull --ff-only 再运行本脚本。" >&2
 fi
 
 cluster_keys=(
@@ -349,8 +355,21 @@ elif [[ "$role" == "control" ]]; then
   set_env_value .env YIYI_LICENSE_SYNC_URL "https://$server_host:18089/v1/lease"
 fi
 
+# 厂商许可证签名公钥（信任根）。
+#
+# 该公钥同时被**硬编码在服务镜像内**（原生验证器与 Java 降级路径），
+# 客户端只信任白名单内的公钥。因此本脚本从授权服务器取到的公钥必须与它一致，
+# 否则部署起来后所有业务请求都会被许可证过滤器拒绝（全站 403）。
+#
+# 这里做的是**一致性校验**，不是信任决策：即使 YIYI_LICENSE_SERVER_URL 被指向
+# 攻击者服务器、返回了攻击者自签公钥，本检查也会在安装阶段直接失败，
+# 而不是产出一个"看似安装成功、实则许可证不可用"的部署。
+#
+# 轮换签名密钥时：先发布带新公钥白名单的新版本镜像，再更新此处并重新安装。
+YIYI_TRUSTED_LICENSE_PUBLIC_KEY="wKWitITf11oh1kRC-6Z05P37xbr1MBbCCUB6CPcAYJs"
+
 sync_license_public_key() {
-  local server_url target temp kid
+  local server_url target temp kid fetched
   server_url="$(env_value .env YIYI_LICENSE_SERVER_URL)"
   server_url="${server_url%/}"
   [[ "$server_url" =~ ^https://[0-9A-Za-z._-]+(:[0-9]{1,5})?$ ]] || {
@@ -378,10 +397,28 @@ sys.stdout.write("\n")
     rm -f "$temp"
     return 1
   fi
+  fetched="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["x"])' "$temp")"
+  if [[ "$fetched" != "$YIYI_TRUSTED_LICENSE_PUBLIC_KEY" ]]; then
+    rm -f "$temp"
+    cat >&2 <<EOF
+授权服务器返回的公钥不受当前版本信任，已中止安装。
+
+  授权服务器：$server_url
+  返回公钥  ：$fetched
+  期望公钥  ：$YIYI_TRUSTED_LICENSE_PUBLIC_KEY
+
+服务镜像只信任内置的厂商公钥。若不中止，部署完成后所有业务请求都会被
+许可证过滤器以 403 拒绝（表现为"安装成功但全站不可用"）。
+
+请确认 YIYI_LICENSE_SERVER_URL 指向正确的授权服务器；
+若厂商确实轮换了签名密钥，需要先升级到包含新公钥白名单的镜像版本。
+EOF
+    return 1
+  fi
   chmod 0644 "$temp"
   mv "$temp" "$target"
   kid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["kid"])' "$target")"
-  echo "授权公钥已同步：$kid"
+  echo "授权公钥已同步并校验：$kid"
 }
 
 preflight() {
@@ -493,31 +530,58 @@ check_endpoint() {
   curl -fsS --max-time 5 "$url" >/dev/null || { echo "$name 健康检查失败：$url" >&2; return 1; }
 }
 
+# 许可证状态检查。
+#
+# /api/license/status 在许可证无效时**仍返回 HTTP 200**（状态在响应体的 state 字段），
+# 所以只判断 HTTP 码会把"许可证不可用"误判为安装成功——用户看到的是
+# "安装完成"，实际所有业务请求都被许可证过滤器 403。
+# 这里解析 state：ACTIVE（正常）与 GRACE（断网宽限期）视为可用。
+check_license_endpoint() {
+  local name="$1" url="$2" body state
+  body="$(curl -fsS --max-time 5 "$url" 2>/dev/null)" || {
+    echo "$name 许可证接口不可达：$url" >&2
+    return 1
+  }
+  state="$(printf '%s' "$body" | python3 -c 'import json,sys
+try:
+    print(json.load(sys.stdin).get("state", ""))
+except Exception:
+    print("")' 2>/dev/null)"
+  case "$state" in
+    ACTIVE|GRACE) return 0 ;;
+    *)
+      echo "$name 许可证不可用（state=${state:-无法解析}）：$url" >&2
+      printf '  %s\n' "$body" >&2
+      return 1
+      ;;
+  esac
+}
+
 healthcheck() {
   case "$role" in
     single)
       check_endpoint license-agent http://127.0.0.1:18088/v1/status
-      check_endpoint config http://127.0.0.1:18085/api/license/status
-      check_endpoint user http://127.0.0.1:18082/api/license/status
-      check_endpoint media http://127.0.0.1:18083/api/license/status
-      check_endpoint gateway http://127.0.0.1:18086/api/license/status
+      check_license_endpoint config http://127.0.0.1:18085/api/license/status
+      check_license_endpoint user http://127.0.0.1:18082/api/license/status
+      check_license_endpoint media http://127.0.0.1:18083/api/license/status
+      check_license_endpoint gateway http://127.0.0.1:18086/api/license/status
       check_endpoint frontend http://127.0.0.1:18080/
       ;;
     control)
       check_endpoint license-agent http://127.0.0.1:18088/v1/status
-      check_endpoint config http://127.0.0.1:18085/api/license/status
+      check_license_endpoint config http://127.0.0.1:18085/api/license/status
       ;;
     user)
       check_endpoint license-sync http://127.0.0.1:18088/v1/status
-      check_endpoint user http://127.0.0.1:18082/api/license/status
+      check_license_endpoint user http://127.0.0.1:18082/api/license/status
       ;;
     media)
       check_endpoint license-sync http://127.0.0.1:18088/v1/status
-      check_endpoint media http://127.0.0.1:18083/api/license/status
+      check_license_endpoint media http://127.0.0.1:18083/api/license/status
       ;;
     edge)
       check_endpoint license-sync http://127.0.0.1:18088/v1/status
-      check_endpoint gateway http://127.0.0.1:18086/api/license/status
+      check_license_endpoint gateway http://127.0.0.1:18086/api/license/status
       check_endpoint frontend http://127.0.0.1:18080/
       ;;
   esac
