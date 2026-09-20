@@ -30,15 +30,15 @@ docker compose logs --tail=100 yiyi-app
 
 ```bash
 cd /opt/YiYi-media-deploy
-sudo ./install-distributed.sh
+sudo ./install.sh
 ```
 
-`install-distributed.sh` 会把本机角色写进 `.env` 的 `COMPOSE_PROFILES`，
-并把 `COMPOSE_FILE` 写为 `compose.distributed.yaml`，因此同样可以直接执行上面的
+`install.sh` 会把本机角色写进 `.env` 的 `COMPOSE_PROFILES`，
+并把 `COMPOSE_FILE` 写为 `compose.yaml`，因此同样可以直接执行上面的
 `docker compose` 命令。跨机升级建议顺序：`control` → `user` / `media` → `edge`。
 
 ::: warning 两个安装脚本都会在 .env 里写死 COMPOSE_FILE
-本仓库同时存在 `compose.yaml`（单机版）与 `compose.distributed.yaml`（分布式），
+本分支只有 `compose.yaml`（按角色 profile 拆分），
 而 `docker compose` 会按固定文件名自动发现 `compose.yaml`。
 安装脚本因此显式写入 `COMPOSE_FILE`，保证在部署目录里直接执行
 `docker compose ps` 时解析到与当前模式匹配的那个文件。
@@ -117,12 +117,12 @@ docker compose ps
 
 ```bash
 sudo ./install.sh                  # 单机版
-sudo ./install-distributed.sh      # 分布式
+sudo ./install.sh      # 分布式
 ```
 
 ::: warning 不允许通过改配置切换 Edition
 单机版与分布式版互转**不是升级**，必须走授权的专用版本升级操作并完成拓扑迁移，
-见 [`MIGRATION.md`](MIGRATION.md)。只改 `.env`、Compose 文件或角色变量不会生效。
+改 `.env`、Compose 文件或角色变量都不会改变部署模式；三种形态各占一个 Git 分支。
 :::
 
 ## 备份
@@ -228,7 +228,7 @@ docker compose exec -T postgres \
 | 数据库结构 | 表结构迁移只向前推进，**没有自动降级**；用升级前的 `pg_dump` 恢复 |
 | 配置 | `.env` 每次改前留一份带日期副本，权限 `0600` |
 | 部署文件 | `git status` / `git diff` 看清改动后人工还原 |
-| Edition / 部署模式 | **不可原地回滚**，见 [`MIGRATION.md`](MIGRATION.md) |
+| Edition / 部署模式 | **不可原地切换**，需换用对应的 Git 分支并走迁移流程 |
 
 ::: danger 禁止用破坏性命令回滚
 `git reset --hard`、`git clean -fdx`、`docker system prune`、`docker volume prune`、
@@ -324,5 +324,4 @@ docker compose exec postgres psql -U "$YIYI_DB_USER" -d yiyi_config
 ## 相关文档
 
 - [`README.md`](README.md)：两种部署模式的安装入口
-- [`MIGRATION.md`](MIGRATION.md)：迁移、多节点阻断与回滚
-- [`migrate-precheck.sh`](migrate-precheck.sh)：迁移前的只读预检
+- [`README.md`](README.md)：本分支形态、角色划分与部署步骤
