@@ -127,7 +127,8 @@ cd /opt/YiYi-media-deploy
 
 ```bash
 # 旧形态（同机多容器）示例：只停业务服务
-docker compose -f compose.distributed.yaml --profile <旧角色> stop
+# 分布式分支的 compose.yaml 用 profile 区分角色：
+docker compose --profile <旧角色> stop
 
 # 外置节点：在节点机上停对应进程或容器
 ```

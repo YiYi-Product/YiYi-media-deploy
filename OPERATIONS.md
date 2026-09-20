@@ -30,15 +30,15 @@ docker compose logs --tail=100 yiyi-app
 
 ```bash
 cd /opt/YiYi-media-deploy
-sudo ./install-distributed.sh
+sudo ./install.sh
 ```
 
-`install-distributed.sh` 会把本机角色写进 `.env` 的 `COMPOSE_PROFILES`，
-并把 `COMPOSE_FILE` 写为 `compose.distributed.yaml`，因此同样可以直接执行上面的
+分布式分支的 `install.sh` 会把本机角色写进 `.env` 的 `COMPOSE_PROFILES`，
+并把 `COMPOSE_FILE` 写为 `compose.yaml`，因此同样可以直接执行上面的
 `docker compose` 命令。跨机升级建议顺序：`control` → `user` / `media` → `edge`。
 
 ::: warning 两个安装脚本都会在 .env 里写死 COMPOSE_FILE
-本仓库同时存在 `compose.yaml`（单机版）与 `compose.distributed.yaml`（分布式），
+本分支只有单机版 `compose.yaml`，分布式形态在 `v2-all-in-one` / `v3-multi-host` 分支，
 而 `docker compose` 会按固定文件名自动发现 `compose.yaml`。
 安装脚本因此显式写入 `COMPOSE_FILE`，保证在部署目录里直接执行
 `docker compose ps` 时解析到与当前模式匹配的那个文件。
@@ -117,7 +117,7 @@ docker compose ps
 
 ```bash
 sudo ./install.sh                  # 单机版
-sudo ./install-distributed.sh      # 分布式
+sudo ./install.sh      # 分布式
 ```
 
 ::: warning 不允许通过改配置切换 Edition

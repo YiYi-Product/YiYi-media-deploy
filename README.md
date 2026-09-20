@@ -8,6 +8,11 @@
 | **分布式部署** | `DISTRIBUTED` | 控制面按 `control` / `user` / `media` / `edge` 角色拆分，可异机部署 | `edition=DISTRIBUTED` |
 
 > 部署说明一律先标明适用模式。本文每一节都会写清楚属于哪种模式。
+>
+> 三种形态各占一个 **Git 分支**，每个分支根目录都能直接
+> `docker compose pull && docker compose up -d`：
+> `main`（单机版三容器）、`v2-all-in-one`（分布式·控制面同机）、
+> `v3-multi-host`（分布式·按角色多机）。
 
 单机版部署是官方推荐的默认入门路径：Storage（`node-local-storage`）与
 Play Agent（`node-local-play-agent`）**已内置在应用容器里**，随主应用安装、启动和升级，
@@ -26,9 +31,6 @@ Play Agent（`node-local-play-agent`）**已内置在应用容器里**，随主�
 | `compose.yaml` | 单机版 | 三容器 Compose，解析后**严格只有** `yiyi-app`、`postgres`、`redis` |
 | `install.sh` | 单机版 | 单机版安装 / 升级脚本 |
 | `.env.example` | 单机版 | 单机版环境变量模板 |
-| `compose.distributed.yaml` | 分布式 | 原多服务器能力，按 profile 拆分角色 |
-| `install-distributed.sh` | 分布式 | 分布式安装 / 升级脚本 |
-| `.env.distributed.example` | 分布式 | 分布式环境变量模板 |
 | `postgres-init.sql` | 两者 | 首次初始化时创建四个业务库 |
 | `migrate-precheck.sh` | 迁移 | 只读预检与影响报告 |
 | `MIGRATION.md` | 迁移 | 迁移、回滚与多节点阻断说明 |
@@ -47,6 +49,7 @@ Play Agent（`node-local-play-agent`）**已内置在应用容器里**，随主�
 ### 1. 准备配置
 
 ```bash
+# main 分支即单机版；也可以显式指定 -b main
 git clone https://github.com/YiYi-Product/YiYi-media-deploy.git /opt/YiYi-media-deploy
 cd /opt/YiYi-media-deploy
 cp .env.example .env
@@ -101,7 +104,7 @@ docker compose start
 ```
 
 > `install.sh` 会把 `COMPOSE_FILE=compose.yaml` 写进 `.env`。
-> 本仓库同时存在 `compose.distributed.yaml`，而 `docker compose` 会按固定文件名
+> 本分支（`main`）只有单机版一套文件；分布式形态在另外两个分支，按固定文件名
 > 自动发现 `compose.yaml`；写死这一项可以保证任何调用方式都解析到单机版文件。
 > 不要手工删除它。
 
@@ -186,6 +189,17 @@ PostgreSQL 不会重新执行初始化 SQL**，因此安装脚本会在 PostgreS
 此时保留激活、许可证状态、日志和备份能力，不开放业务功能，**不删除任何数据**。
 :::
 
+分布式部署的文件**不在本分支**，请切换到对应分支后再按本文档操作：
+
+| 分支 | 形态 | 适用场景 |
+| --- | --- | --- |
+| `v2-all-in-one` | 控制面**全部同机** | 一台服务器跑控制面，播放/存储用外部节点 |
+| `v3-multi-host` | 控制面**按角色多机** | 每类服务各一台机器，可横向拆分 |
+
+两个分支的根目录都只有一份 `compose.yaml` / `install.sh` / `.env.example`，
+部署步骤见各分支自己的 `README.md`。下面「分布式部署」一节给出的是**多机形态**
+（`v3-multi-host`）的角色划分，便于对照；同机形态无需角色与 `join.env` 分发。
+
 多台服务器需要位于同一私有网络，按 `control` → `user` → `media` → `edge` 顺序安装。
 `control`、`user`、`media`、`edge` 是分布式部署**内部**的角色，不是独立部署模式。
 
@@ -199,9 +213,10 @@ PostgreSQL 不会重新执行初始化 SQL**，因此安装脚本会在 PostgreS
 ### 1. 每台机器准备配置
 
 ```bash
-git clone https://github.com/YiYi-Product/YiYi-media-deploy.git /opt/YiYi-media-deploy
+git clone -b v3-multi-host https://github.com/YiYi-Product/YiYi-media-deploy.git /opt/YiYi-media-deploy
 cd /opt/YiYi-media-deploy
-cp .env.distributed.example .env
+# 分布式部署请先切换到对应分支：git checkout v2-all-in-one（或 v3-multi-host）
+cp .env.example .env
 chmod 0600 .env
 ```
 
@@ -216,7 +231,7 @@ YIYI_USER_HOST=<User服务器内网IP或域名>
 使用外部 PostgreSQL 时，另填 `YIYI_DB_MODE=external` 与数据库地址、端口、凭据。
 
 ```bash
-sudo ./install-distributed.sh
+sudo ./install.sh
 ```
 
 安装成功后会生成 `join.env`（`0600`）与 `cluster-relay.crt`（`0644`）。
@@ -248,7 +263,7 @@ YIYI_SERVER_HOST=<本机内网IP或域名>
 `media`、`edge` 同理，只改角色。每台执行：
 
 ```bash
-sudo ./install-distributed.sh
+sudo ./install.sh
 ```
 
 安装完成后删除其他机器上的 `join.env`，访问 `http://<公网IP或域名>:18080` 激活。
@@ -291,7 +306,7 @@ docker compose ps
 
 ```bash
 sudo ./install.sh                  # 单机版
-sudo ./install-distributed.sh      # 分布式
+sudo ./install.sh      # 分布式
 ```
 
 > 安装脚本**不会**自动 `git pull`（从旧版本起已移除）。这样执行 `sudo ./install.sh`

@@ -21,7 +21,7 @@ Play Agent 八个组件，与 `postgres`、`redis` 一起构成单机版的三�
 
 分布式部署继续使用按服务拆分的镜像（`yiyi-media-config`、`yiyi-media-user`、
 `yiyi-media-media`、`yiyi-media-gateway`、`yiyi-media-frontend`、
-`yiyi-media-license-agent` 等），由 `compose.distributed.yaml` 引用。
+`yiyi-media-license-agent` 等），由分布式分支（`v2-all-in-one` / `v3-multi-host`）的 `compose.yaml` 引用。
 
 ## 标签约定
 
