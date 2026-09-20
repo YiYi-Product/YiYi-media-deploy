@@ -1,7 +1,7 @@
 # YiYi Media 单机版部署（STANDALONE）—— 严格三容器 Compose。
 #
-# 适用模式：单机版部署。分布式部署请改用 compose.distributed.yaml
-# （安装脚本为 install-distributed.sh）。
+# 适用模式：单机版部署。分布式部署改用另外两个分支
+# （v2-all-in-one 控制面同机 / v3-multi-host 按角色多机）。
 #
 # 标准拓扑（单机版开发计划 §3.2、§5.3、§12.1）：
 #
@@ -136,10 +136,21 @@ services:
       - type: bind
         source: ${YIYI_DATA_DIR:-./data}/storage
         target: /data/storage
+      # 挂载文件夹（Storage 的挂载数据根）。单独再挂一层，便于把它放到
+      # 独立大盘或 NAS 上：设置 YIYI_STORAGE_MOUNT_DIR 即可，
+      # 不设置时仍指向数据目录下的 storage/mount-data（行为与以前一致）。
+      - type: bind
+        source: ${YIYI_STORAGE_MOUNT_DIR:-${YIYI_DATA_DIR:-./data}/storage/mount-data}
+        target: /data/storage/mount-data
       # 内置 Play Agent 缓存：vfs-cache / image-cache
       - type: bind
         source: ${YIYI_DATA_DIR:-./data}/play-agent
         target: /data/play-agent
+      # VFS 内容缓存。同样可单独指定到更快的盘（如 SSD）：
+      # 设置 YIYI_PLAY_AGENT_VFS_CACHE_DIR，不设置时行为与以前一致。
+      - type: bind
+        source: ${YIYI_PLAY_AGENT_VFS_CACHE_DIR:-${YIYI_DATA_DIR:-./data}/play-agent/vfs-cache}
+        target: /data/play-agent/vfs-cache
       # 七个服务的日志目录
       - type: bind
         source: ${YIYI_DATA_DIR:-./data}/logs

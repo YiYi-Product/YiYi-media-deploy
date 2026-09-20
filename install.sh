@@ -222,6 +222,9 @@ fi
 data_dir=""
 postgres_data_dir=""
 postgres_data_existing=false
+# 两个可单独指定的宿主挂载目录（留空表示用数据根目录下的默认子目录）。
+storage_mount_dir=""
+vfs_cache_dir=""
 
 configure_data_dir() {
   local configured
@@ -235,6 +238,75 @@ configure_data_dir() {
   data_dir="$configured"
   postgres_data_dir="$data_dir/postgres"
   set_env_value .env YIYI_DATA_DIR "$data_dir"
+}
+
+# 把可选的宿主挂载目录规范化成绝对路径并写回 .env。
+#
+# 单机版把全部数据放在一个数据根目录下，但其中两个目录往往需要单独规划：
+#   * 挂载文件夹（Storage 的挂载数据根）—— 可能很大，客户想放独立大盘或 NAS；
+#   * VFS 内容缓存 —— 读写频繁，客户想放 SSD。
+# 两者都允许独立指定；留空时沿用数据根目录下的默认子目录，行为与以前完全一致。
+# 相对路径以部署目录为基准，与 YIYI_DATA_DIR 的约定一致。
+configure_optional_mount_dir() {
+  local key="$1" configured resolved
+  configured="$(env_value .env "$key")"
+  if [[ -z "$configured" ]]; then
+    return 0
+  fi
+  if [[ "$configured" != /* ]]; then
+    configured="$DEPLOY_DIR/$configured"
+  fi
+  resolved="$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$configured")"
+  set_env_value .env "$key" "$resolved"
+  case "$key" in
+    YIYI_STORAGE_MOUNT_DIR) storage_mount_dir="$resolved" ;;
+    YIYI_PLAY_AGENT_VFS_CACHE_DIR) vfs_cache_dir="$resolved" ;;
+  esac
+}
+
+# 校验自定义挂载目录不会和数据根目录里的关键目录互相嵌套。
+#
+# 若把 storage/mount-data 指到 data 根目录或它的祖先，容器会把整个数据目录
+# 当作挂载数据根卷进去，ReadCache/Spool 都会看到一份多余的镜像，属于危险配置。
+validate_custom_mount_dir() {
+  local key="$1" value="$2" default_dir="$3"
+  [[ -n "$value" ]] || return 0
+  # 不允许指向根目录。
+  if [[ "$value" == "/" ]]; then
+    echo "$key 不能指向根目录 /" >&2
+    return 1
+  fi
+  # 不允许等于数据根目录本身，也不允许是它的祖先（会卷进整个 data 目录）。
+  if [[ "$data_dir" == "$value" || "$data_dir" == "$value"/* ]]; then
+    echo "$key=$value 覆盖了数据根目录 $data_dir（或它的祖先），会破坏数据目录布局。" >&2
+    echo "请改成一个独立目录，例如 /mnt/yiyi-storage。" >&2
+    return 1
+  fi
+  return 0
+}
+
+# 创建自定义挂载目录并设置权限。已存在时只补权限，不动内容。
+prepare_custom_mount_dir() {
+  local value="$1" owner_unit="$2"
+  [[ -n "$value" ]] || return 0
+  if [[ -e "$value" && ! -d "$value" ]]; then
+    echo "自定义挂载目录存在但不是目录：$value" >&2
+    return 1
+  fi
+  if [[ ! -d "$value" ]]; then
+    mkdir -p "$value" || {
+      echo "无法创建自定义挂载目录：$value" >&2
+      return 1
+    }
+    chmod 0750 "$value" || true
+  fi
+  if [[ "$(id -u)" != "0" ]]; then
+    echo "需要 root 才能设置 $value 的属主（${owner_unit}），请使用 sudo 执行本脚本" >&2
+    return 1
+  fi
+  if [[ "$(stat -c '%u:%g' "$value" 2>/dev/null || stat -f '%u:%g' "$value")" != "$owner_unit" ]]; then
+    chown "$owner_unit" "$value" || true
+  fi
 }
 
 # 目录格式：路径|权限|属主。属主留空表示不改（由基础镜像自己在启动时修正）。
@@ -317,6 +389,21 @@ generate_optional_secret_if_requested() {
 configure_data_dir
 validate_postgres_data_dir
 prepare_data_dirs
+
+# 两个可选的宿主挂载目录：先规范化，再校验，最后创建并授权。
+# 必须在 prepare_data_dirs 之后，因为校验要知道数据根目录的最终位置。
+configure_optional_mount_dir YIYI_STORAGE_MOUNT_DIR
+configure_optional_mount_dir YIYI_PLAY_AGENT_VFS_CACHE_DIR
+validate_custom_mount_dir YIYI_STORAGE_MOUNT_DIR "$storage_mount_dir" "$data_dir/storage/mount-data" || exit 1
+validate_custom_mount_dir YIYI_PLAY_AGENT_VFS_CACHE_DIR "$vfs_cache_dir" "$data_dir/play-agent/vfs-cache" || exit 1
+prepare_custom_mount_dir "$storage_mount_dir" "10001:10001" || exit 1
+prepare_custom_mount_dir "$vfs_cache_dir" "10001:10001" || exit 1
+if [[ -n "$storage_mount_dir" ]]; then
+  echo "  挂载文件夹使用自定义目录：$storage_mount_dir"
+fi
+if [[ -n "$vfs_cache_dir" ]]; then
+  echo "  Play Agent VFS 缓存使用自定义目录：$vfs_cache_dir"
+fi
 
 db_user="$(env_value .env YIYI_DB_USER)"
 set_env_value .env YIYI_DB_USER "${db_user:-yiyi}"
