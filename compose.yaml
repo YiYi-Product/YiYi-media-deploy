@@ -12,7 +12,7 @@
 #   │ user           :18082  仅容器内部          │
 #   │ media          :18083  仅容器内部          │
 #   │ storage        :18084  仅容器内部          │
-#   │ play-agent     :19090  默认只绑宿主机回环   │
+#   │ play-agent     :19090  对外（播放客户端直连） │
 #   │ license-agent  :18088  仅容器内部          │
 #   └───────────────────────────────────────────┘
 #              │                    │
@@ -21,7 +21,7 @@
 # 硬性约束：
 #   * 本文件解析后只能出现 yiyi-app、postgres、redis 三个服务，不使用 profile；
 #   * PostgreSQL 与 Redis 走 Compose 私有网络，默认不向宿主机发布任何端口；
-#   * 应用容器只发布前端 18080，Play Agent 19090 默认绑定 127.0.0.1；
+#   * 应用容器发布前端 18080 与 Play Agent 19090（播放客户端要直连）；
 #   * 应用容器不使用 privileged、不授予 SYS_ADMIN、不挂载 /dev/fuse（计划 §11）；
 #   * 镜像标签统一由 YIYI_IMAGE_TAG 锁定。
 
@@ -67,6 +67,9 @@ services:
       # 从而保住宿主媒体源的 nodeId 引用、用户线路授权与历史任务关联（计划 §7.2、§13.2）。
       YIYI_EMBEDDED_STORAGE_NODE_ID: ${YIYI_EMBEDDED_STORAGE_NODE_ID:-node-local-storage}
       YIYI_EMBEDDED_PLAY_AGENT_NODE_ID: ${YIYI_EMBEDDED_PLAY_AGENT_NODE_ID:-node-local-play-agent}
+      # 部署时填写的公网地址/域名：作为内置节点首次创建时的默认「对外地址」，
+      # 让用户播放线路开箱可用。管理员随后可在节点管理页面改成自己的反代域名。
+      YIYI_PUBLIC_HOST: ${YIYI_PUBLIC_HOST:-}
 
       # ── 数据库（计划 §5.3、§6）───────────────────────────────────────
       # 容器内通过服务名 postgres 互访（不是 127.0.0.1）；四个业务库在同一个
@@ -137,11 +140,12 @@ services:
         source: ${YIYI_DATA_DIR:-./data}/logs
         target: /data/logs
     ports:
-      # 唯一对外的业务端口。
+      # Web 入口（后台与用户门户）。
       - "${YIYI_APP_BIND_HOST:-0.0.0.0}:${YIYI_APP_PORT:-18080}:18080"
-      # Play Agent 默认只绑宿主机回环地址，供宿主机 nginx / Caddy 反代。
-      # 需要让另一台机器上的反代访问时必须显式改绑定地址，并限制来源 IP（计划 §5.3）。
-      - "${YIYI_PLAY_AGENT_BIND_HOST:-127.0.0.1}:${YIYI_PLAY_AGENT_PORT:-19090}:19090"
+      # Play Agent 是播放客户端**直连**的端口，必须真正对外发布。
+      # 默认绑 0.0.0.0；若前面有 Caddy/nginx 反代，可改为 127.0.0.1，
+      # 并在「节点管理」里把该节点的对外地址改成反代域名与端口。
+      - "${YIYI_PLAY_AGENT_BIND_HOST:-0.0.0.0}:${YIYI_PLAY_AGENT_PORT:-19090}:19090"
     # 沿用聚合镜像自带的 HEALTHCHECK（/opt/yiyi/healthcheck.py）：它不只看进程存活，
     # 而是逐一确认全部内部服务与两个内置节点的状态（计划 §5.2、§16）。
 
