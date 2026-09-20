@@ -384,12 +384,18 @@ sync_license_public_key() {
   target="$DEPLOY_DIR/config/license-public.runtime.jwk"
   temp="$(mktemp "$DEPLOY_DIR/config/license-public.runtime.jwk.XXXXXX")"
   local curl_proto=(--proto '=https' --proto-redir '=https' --tlsv1.2)
+  # 本脚本运行在**宿主机**上，而 host.docker.internal 只是 Docker 网络内的别名，
+  # 宿主机解析不了它（实测报错 Could not resolve host: host.docker.internal）。
+  # 因此这里把它翻译成宿主机可达的 127.0.0.1 再请求；
+  # 容器内进程仍用原值（compose 已配 extra_hosts: host-gateway）。
+  local host_fetch_url="$server_url"
   if [[ "$allow_loopback_http" == true ]]; then
+    host_fetch_url="${server_url/host.docker.internal/127.0.0.1}"
     # 回环地址：TLS 无意义，且客户端通常没有为 127.0.0.1 签发的证书。
     curl_proto=(--proto '=http')
   fi
   if ! curl "${curl_proto[@]}" \
-      --fail --silent --show-error "$server_url/api/v1/public-keys" | \
+      --fail --silent --show-error "$host_fetch_url/api/v1/public-keys" | \
     python3 -c '
 import json, sys
 document = json.load(sys.stdin)
