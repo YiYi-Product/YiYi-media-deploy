@@ -3,7 +3,14 @@
 # 适用场景：一台服务器承载**全部控制面服务**，播放与存储能力由外部工作节点提供。
 #
 #   本机容器：frontend(18080) gateway(18086) config(18085) user(18082)
-#             media(18083) license-agent(18088) postgres(5432) redis(6379)
+#             media(18083) license-agent(18088)
+#             postgres(5432) redis(6379)  ← 可选，见下
+#
+# 数据库与缓存可任选自带或外部，两者互相独立：
+#   YIYI_DB_MODE=bundled|external            PostgreSQL
+#   YIYI_REDIS_MODE=bundled|external         Redis
+# 安装脚本据此启用 compose profile（bundled-postgres / bundled-redis）。
+# 例如「用外部数据库 + 自带 Redis」：YIYI_DB_MODE=external YIYI_REDIS_MODE=bundled。
 #   外部节点：Storage 与 Play Agent **不在本文件里**。在网页「节点管理」新增节点后，
 #             用页面给出的一键命令部署到其他机器（安装脚本与二进制由 config 分发）。
 #
@@ -24,11 +31,12 @@ x-license-env: &license-env
   YIYI_LICENSE_NATIVE_LIBRARY: /opt/yiyi/lib/libyiyi_license_native.so
 services:
   postgres:
+    # 用 profile 控制是否在本机启动数据库：不启用 bundled-postgres 即表示
+    # 使用**外部** PostgreSQL（此时 YIYI_DB_HOST 指向外部实例）。
+    # 这样"要不要自带数据库"与"要不要自带 Redis"可以独立选择。
+    profiles: ["bundled-postgres"]
     image: postgres:16.4
     restart: unless-stopped
-    deploy:
-      # external 模式下安装脚本写入 0；旧部署未设置时保持 1，避免升级时误停数据库。
-      replicas: ${YIYI_POSTGRES_REPLICAS:-1}
     environment:
       POSTGRES_USER: ${YIYI_DB_USER:?请设置 YIYI_DB_USER}
       POSTGRES_PASSWORD: ${YIYI_DB_PASSWORD:?请设置 YIYI_DB_PASSWORD}
@@ -38,8 +46,8 @@ services:
         target: /var/lib/postgresql/data
       - ./postgres-init.sql:/docker-entrypoint-initdb.d/00-init-yiyi.sql:ro
     ports:
-      # control 角色下绑到 YIYI_INFRA_BIND_HOST（本机内网地址），供 user / media 连接。
-      # external 模式下由安装脚本把 replicas 置 0，本服务不启动。
+      # 绑到 YIYI_INFRA_BIND_HOST（本机内网地址）。仅在本机自带数据库时存在；
+      # 用外部数据库时该服务不会被启动。
       - "${YIYI_INFRA_BIND_HOST:-127.0.0.1}:${YIYI_DB_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d postgres"]
@@ -48,6 +56,9 @@ services:
       retries: 20
       start_period: 10s
   redis:
+    # 同 postgres：不启用 bundled-redis 即表示使用**外部** Redis
+    # （此时 YIYI_REDIS_HOST 指向外部实例）。
+    profiles: ["bundled-redis"]
     image: redis:7.4-alpine
     restart: unless-stopped
     command:

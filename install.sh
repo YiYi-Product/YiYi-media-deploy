@@ -148,7 +148,7 @@ cluster_keys=(
   YIYI_LICENSE_CLUSTER_TOKEN YIYI_LICENSE_SERVER_URL
   YIYI_LICENSE_SYNC_URL
 )
-cluster_optional_keys=(YIYI_DB_MODE YIYI_DB_PORT)
+cluster_optional_keys=(YIYI_DB_MODE YIYI_DB_PORT YIYI_REDIS_MODE YIYI_REDIS_PORT)
 
 if [[ "$role" != "single" && "$role" != "control" ]]; then
   if [[ "$installed" == false ]]; then
@@ -187,7 +187,31 @@ db_port="${db_port:-5432}"
 set_env_value .env YIYI_DB_MODE "$db_mode"
 set_env_value .env YIYI_DB_PORT "$db_port"
 
-if [[ ("$role" == "single" || "$role" == "control") && "$db_mode" == "external" ]]; then
+# Redis 与数据库**独立**选择：允许「外部数据库 + 自带 Redis」等任意组合。
+redis_mode="$(env_value .env YIYI_REDIS_MODE)"
+redis_mode="${redis_mode:-bundled}"
+case "$redis_mode" in
+  bundled|external) ;;
+  *) echo "YIYI_REDIS_MODE 只支持 bundled 或 external" >&2; exit 1 ;;
+esac
+redis_port="$(env_value .env YIYI_REDIS_PORT)"
+redis_port="${redis_port:-6379}"
+[[ "$redis_port" =~ ^[0-9]+$ ]] && ((redis_port >= 1 && redis_port <= 65535)) || {
+  echo "YIYI_REDIS_PORT 必须是 1-65535 之间的端口" >&2
+  exit 1
+}
+set_env_value .env YIYI_REDIS_MODE "$redis_mode"
+set_env_value .env YIYI_REDIS_PORT "$redis_port"
+
+if [[ "$redis_mode" == "external" ]]; then
+  redis_host="$(env_value .env YIYI_REDIS_HOST)"
+  [[ "$redis_host" =~ ^[0-9A-Za-z._-]+$ ]] || {
+    echo "YIYI_REDIS_MODE=external 时必须填写不带协议和端口的 YIYI_REDIS_HOST" >&2
+    exit 1
+  }
+fi
+
+if [[ "$db_mode" == "external" ]]; then
   db_host="$(env_value .env YIYI_DB_HOST)"
   [[ "$db_host" =~ ^[0-9A-Za-z._-]+$ ]] || {
     echo "external 模式必须填写不带协议和端口的 YIYI_DB_HOST" >&2
@@ -205,13 +229,19 @@ if [[ ("$role" == "single" || "$role" == "control") && "$db_mode" == "external" 
   }
 fi
 
-postgres_replicas=1
-if [[ ("$role" == "single" || "$role" == "control") && "$db_mode" == "external" ]]; then
-  postgres_replicas=0
+# 用 compose profile 决定本机是否启动 postgres / redis。
+# 两者互相独立，因此可以用「外部数据库 + 自带 Redis」这类组合。
+# 注意：应用服务不带 profile，所以它们始终会被启动。
+compose_profiles=()
+[[ "$db_mode" == "bundled" ]] && compose_profiles+=("bundled-postgres")
+[[ "$redis_mode" == "bundled" ]] && compose_profiles+=("bundled-redis")
+if [[ ${#compose_profiles[@]} -eq 0 ]]; then
+  set_env_value .env COMPOSE_PROFILES ""
+  echo "  数据库与 Redis 均使用外部实例，本机不启动 postgres / redis 容器。"
+else
+  set_env_value .env COMPOSE_PROFILES "$(IFS=,; echo "${compose_profiles[*]}")"
+  echo "  本机自带：${compose_profiles[*]}"
 fi
-# 本分支不按 profile 启停服务：compose.yaml 里已无 profiles。
-set_env_value .env COMPOSE_PROFILES ""
-set_env_value .env YIYI_POSTGRES_REPLICAS "$postgres_replicas"
 
 compose() {
   docker compose --env-file "$DEPLOY_DIR/.env" -f "$DEPLOY_DIR/compose.yaml" "$@"
@@ -254,7 +284,10 @@ configure_data_dir() {
       if [[ "$db_mode" == "bundled" ]]; then
         register_data_mount postgres /var/lib/postgresql/data postgres 0700
       fi
-      register_data_mount redis /data redis 0750
+      # Redis 数据目录只在本机自带 redis 时才需要；用外部 Redis 时不创建。
+      if [[ "$redis_mode" == "bundled" ]]; then
+        register_data_mount redis /data redis 0750
+      fi
       register_data_mount license-agent /var/lib/yiyi-license license/identity 0700 10001
       register_data_mount license-agent /var/run/yiyi-license license/lease 0700 10001
       register_data_mount config /data/uploads config/uploads 0750 10001
@@ -267,7 +300,10 @@ configure_data_dir() {
       if [[ "$db_mode" == "bundled" ]]; then
         register_data_mount postgres /var/lib/postgresql/data postgres 0700
       fi
-      register_data_mount redis /data redis 0750
+      # Redis 数据目录只在本机自带 redis 时才需要；用外部 Redis 时不创建。
+      if [[ "$redis_mode" == "bundled" ]]; then
+        register_data_mount redis /data redis 0750
+      fi
       register_data_mount license-agent /var/lib/yiyi-license license/identity 0700 10001
       register_data_mount license-agent /var/run/yiyi-license license/lease 0700 10001
       register_data_mount config /data/uploads config/uploads 0750 10001
@@ -376,7 +412,10 @@ if [[ "$role" == "single" ]]; then
   if [[ "$db_mode" == "bundled" ]]; then
     set_env_value .env YIYI_DB_HOST 127.0.0.1
   fi
-  set_env_value .env YIYI_REDIS_HOST 127.0.0.1
+  # Redis 独立判定：bundled 指本机的 redis 容器，external 保留用户填写的外部地址。
+  if [[ "$redis_mode" == "bundled" ]]; then
+    set_env_value .env YIYI_REDIS_HOST 127.0.0.1
+  fi
   set_env_value .env YIYI_CONFIG_HOST 127.0.0.1
   set_env_value .env YIYI_USER_HOST 127.0.0.1
   set_env_value .env YIYI_INFRA_BIND_HOST 127.0.0.1
