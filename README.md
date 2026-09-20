@@ -69,6 +69,8 @@ YIYI_SERVER_HOST=<服务器IP或域名>
 | `YIYI_SERVICE_TOKEN` | 保持 `GENERATE_ON_INSTALL` 自动生成；已有部署必须填原值 |
 | `YIYI_IMAGE_TAG` | 留空用 `latest`；生产环境建议锁定到不可变版本标签 |
 | `YIYI_DATA_DIR` | 留空用部署目录下的 `data/`；可填绝对或相对路径 |
+| `YIYI_STORAGE_MOUNT_DIR` | 可选。**挂载文件夹**（Storage 挂载数据根）改放别的盘时填，如 `/mnt/big/yiyi-mounts`；留空 = `<YIYI_DATA_DIR>/storage/mount-data` |
+| `YIYI_PLAY_AGENT_VFS_CACHE_DIR` | 可选。**VFS 内容缓存**改放更快的盘时填，如 `/mnt/ssd/yiyi-vfs`；留空 = `<YIYI_DATA_DIR>/play-agent/vfs-cache` |
 
 ::: warning 单机版没有角色与节点安装变量
 单机版不使用 `YIYI_DEPLOY_ROLE`，也没有 Control/User/Media/Edge 角色选择，

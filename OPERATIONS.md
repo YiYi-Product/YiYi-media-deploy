@@ -66,6 +66,18 @@ data/
 └── logs/{config,user,media,gateway,storage,play-agent,license}/
 ```
 
+其中两个目录可以**单独放到别的磁盘**（用于独立大盘 / SSD），留空则保持在
+数据根目录内：
+
+| 变量 | 默认位置 | 常见用途 |
+| --- | --- | --- |
+| `YIYI_STORAGE_MOUNT_DIR` | `<YIYI_DATA_DIR>/storage/mount-data` | 挂载文件夹体量大，放独立大盘或 NAS |
+| `YIYI_PLAY_AGENT_VFS_CACHE_DIR` | `<YIYI_DATA_DIR>/play-agent/vfs-cache` | 缓存读写频繁，放 SSD |
+
+两者互相独立，只改一个不影响另一个。安装脚本会创建目录、把属主设为
+`10001:10001`（已存在的目录只补权限、不动内容），并拒绝指向 `/` 或数据根目录
+（含其祖先）这类会破坏目录布局的取值。
+
 ### 分布式部署
 
 | 角色 | `data/` 下的内容 |
