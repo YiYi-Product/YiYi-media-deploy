@@ -107,4 +107,4 @@ docker compose exec -T yiyi-app \
 
 - [`README.md`](README.md)：两种部署模式的安装与升级
 - [`OPERATIONS.md`](OPERATIONS.md)：备份、回滚与端口
-- [`MIGRATION.md`](MIGRATION.md)：迁移与多节点阻断
+- [`README.md`](README.md)：从旧一代拓扑迁入的步骤

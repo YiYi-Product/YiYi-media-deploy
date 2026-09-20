@@ -18,6 +18,9 @@
 #              │                    │
 #        postgres 容器        redis 容器
 #
+# 容器命名：单机版的三个容器前缀统一为 YiYi-media-standalone，
+# 在共用宿主机上可与其它部署（或分布式形态）区分开。
+#
 # 硬性约束：
 #   * 本文件解析后只能出现 yiyi-app、postgres、redis 三个服务，不使用 profile；
 #   * PostgreSQL 与 Redis 走 Compose 私有网络，默认不向宿主机发布任何端口；
@@ -40,6 +43,8 @@ x-yiyi-license-env: &yiyi-license-env
 services:
   yiyi-app:
     image: ghcr.io/yiyi-product/yiyi-media-standalone:${YIYI_IMAGE_TAG:-latest}
+    # 固定容器名：单机版在宿主机上应当一眼可辨，避免与同机其它部署混淆。
+    container_name: YiYi-media-standalone
     restart: unless-stopped
     depends_on:
       postgres:
@@ -151,6 +156,7 @@ services:
 
   postgres:
     image: postgres:16.4
+    container_name: YiYi-media-standalone-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${YIYI_DB_USER:-yiyi}
@@ -173,6 +179,7 @@ services:
 
   redis:
     image: redis:7.4-alpine
+    container_name: YiYi-media-standalone-redis
     restart: unless-stopped
     command:
       - sh

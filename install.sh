@@ -2,7 +2,8 @@
 #
 # YiYi Media 单机版部署（STANDALONE）安装 / 升级脚本。
 #
-# 适用模式：单机版部署（三容器：yiyi-app + postgres + redis）。
+# 适用模式：单机版部署（三容器：YiYi-media-standalone +
+#           YiYi-media-standalone-postgres + YiYi-media-standalone-redis）。
 # 分布式部署请使用 install-distributed.sh 与 compose.distributed.yaml。
 #
 # 本脚本只处理单机版路径，因此：
@@ -112,7 +113,7 @@ if [[ -z "$legacy_reason" ]]; then
 fi
 
 # 旧一代用 Docker 命名卷保存数据。单机版改用统一数据根目录下的绑定挂载，
-# 因此这里**只读**列出仍然存在的旧命名卷，提醒操作者按 MIGRATION.md 自行搬运。
+# 因此这里**只读**列出仍然存在的旧命名卷，提醒操作者自行搬运（本脚本不搬运、不删除）。
 # 本脚本不会 docker cp、不会删除卷，也不会覆盖非空的数据目录。
 legacy_volumes=""
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
@@ -133,10 +134,9 @@ if [[ -n "$legacy_reason" && "$migration_confirmed" != true ]]; then
 单机版安装脚本不会替你停掉、删除或改造旧容器：旧容器与旧配置在验收完成前必须保留
 （计划 §13.4）。请先执行只读预检并按迁移文档操作：
 
-  ./migrate-precheck.sh            # 只读预检 + 影响报告，不做任何修改
-  见 MIGRATION.md                  # 单 Storage + 单 Play 的迁移流程
-
-确认已完成预检、备份，并明确要让三容器聚合形态接管本机后，再执行：
+  1) 先备份旧部署的数据：各业务库导出、上传目录、许可证状态目录；
+  2) 旧容器与旧配置在验收完成前**保持保留**，不要删除；
+  3) 明确要让三容器聚合形态接管本机后，再执行：
 
   sudo YIYI_MIGRATION_CONFIRMED=1 ./install.sh
 
@@ -159,7 +159,7 @@ if [[ -n "$legacy_volumes" ]]; then
 $(printf '  - %s\n' $legacy_volumes)
 
 单机版改用统一数据根目录下的绑定挂载，**不会**自动搬运这些卷，也不会删除它们。
-请按 MIGRATION.md 自行把其中的数据复制到数据目录（旧卷请保留到验收完成之后）：
+请自行把其中的数据复制到数据目录（旧卷请保留到验收完成之后）：
 
   docker run --rm -v <卷名>:/from -v "$DEPLOY_DIR/data":/to alpine \\
     sh -c 'cp -a /from/. /to/<目标子目录>/'
@@ -655,7 +655,7 @@ except Exception:
 
 单机版聚合镜像只接受 edition=STANDALONE 的许可证（计划 §8.7）。
 部署与数据均未被改动，但业务功能不会开放。请向发布方申请单机版授权码，
-或在明确授权后按 MIGRATION.md 迁移到分布式部署。
+或在明确授权后改用分布式分支（v2-all-in-one / v3-multi-host）的部署文件。
 EOF
     return 1
   fi
@@ -742,7 +742,7 @@ adopt_legacy_embedded_node_ids() {
   Storage   节点数：${count_storage:-0}
   Play Agent 节点数：${count_play:-0}
 
-请先运行 ./migrate-precheck.sh 生成影响报告，由管理员明确选择保留哪一个节点，
+请由管理员明确选择保留哪一个节点，
 再把 YIYI_EMBEDDED_STORAGE_NODE_ID / YIYI_EMBEDDED_PLAY_AGENT_NODE_ID 手动填成
 被选中的节点 ID 后重新执行本脚本。未选中的节点会保留记录，不会被删除。
 EOF
@@ -833,7 +833,10 @@ chmod 0600 .installed
 
 cat <<EOF
 
-单机版部署完成：yiyi-app + postgres + redis 三个容器。
+单机版部署完成：三个容器均已启动。
+  YiYi-media-standalone           应用（含全部内部服务与两个内置节点）
+  YiYi-media-standalone-postgres  数据库
+  YiYi-media-standalone-redis     缓存
 
   网页入口：http://$public_host:18080
   首次使用直接在网页输入发布方提供的 STANDALONE 一次性授权码激活。
@@ -843,16 +846,16 @@ cat <<EOF
 
   日常命令（无需 -f 或 --profile）：
     docker compose ps
-    docker compose logs --tail=100 yiyi-app
+    docker compose logs --tail=100 yiyi-app     # 参数是 compose 服务名
 
-  备份、回滚与迁移见 README.md、OPERATIONS.md 与 MIGRATION.md。
+  备份、回滚与运维见 README.md 与 OPERATIONS.md。
 EOF
 
 if [[ -n "$legacy_reason" ]]; then
   cat <<EOF
 
 注意：本次是在保留旧拓扑的前提下启动单机版（${legacy_reason}）。
-请按 MIGRATION.md 完成验证后，再**手工**移除旧容器与旧进程；
+请在完成验收验证后，再**手工**移除旧容器与旧进程；
 本脚本没有删除任何旧容器或旧数据。
 EOF
 fi

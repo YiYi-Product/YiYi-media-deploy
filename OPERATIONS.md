@@ -121,8 +121,9 @@ sudo ./install.sh      # 分布式
 ```
 
 ::: warning 不允许通过改配置切换 Edition
-单机版与分布式版互转**不是升级**，必须走授权的专用版本升级操作并完成拓扑迁移，
-见 [`MIGRATION.md`](MIGRATION.md)。只改 `.env`、Compose 文件或角色变量不会生效。
+单机版与分布式版互转**不是升级**，必须走授权的专用版本升级操作并完成拓扑迁移：
+改用对应分支（`v2-all-in-one` / `v3-multi-host`）的部署文件。
+只改 `.env`、Compose 文件或角色变量不会生效。
 :::
 
 ## 备份
@@ -228,7 +229,7 @@ docker compose exec -T postgres \
 | 数据库结构 | 表结构迁移只向前推进，**没有自动降级**；用升级前的 `pg_dump` 恢复 |
 | 配置 | `.env` 每次改前留一份带日期副本，权限 `0600` |
 | 部署文件 | `git status` / `git diff` 看清改动后人工还原 |
-| Edition / 部署模式 | **不可原地回滚**，见 [`MIGRATION.md`](MIGRATION.md) |
+| Edition / 部署模式 | **不可原地切换**，需改用对应分支的部署文件并走迁移流程 |
 
 ::: danger 禁止用破坏性命令回滚
 `git reset --hard`、`git clean -fdx`、`docker system prune`、`docker volume prune`、
@@ -324,5 +325,4 @@ docker compose exec postgres psql -U "$YIYI_DB_USER" -d yiyi_config
 ## 相关文档
 
 - [`README.md`](README.md)：两种部署模式的安装入口
-- [`MIGRATION.md`](MIGRATION.md)：迁移、多节点阻断与回滚
-- [`migrate-precheck.sh`](migrate-precheck.sh)：迁移前的只读预检
+- [`README.md`](README.md)：从旧一代拓扑迁入的步骤与注意事项
