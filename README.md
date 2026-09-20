@@ -102,12 +102,54 @@ docker compose ps
 或用 `docker compose --profile <角色> up -d` 直接指定。
 若控制面全在一台机器上，用 `v2-all-in-one` 分支更省事（无需角色与 join 分发）。
 
-## 数据库模式
+## 数据库与缓存（可任选自带或外部，互相独立）
 
-- **bundled**（默认）：`control` 角色本机跑 `postgres` 与 `redis`。
-- **external**：使用已有 PostgreSQL / Redis，设置 `YIYI_DB_MODE=external`
-  与 `YIYI_DB_HOST` / `YIYI_REDIS_HOST` 等；安装脚本会把
-  `YIYI_POSTGRES_REPLICAS` 置 0。
+只在 `control` 角色上生效：
+
+| 变量 | 取值 | 效果 |
+| --- | --- | --- |
+| `YIYI_DB_MODE` | `bundled`（默认） | `control` 上启动 `postgres` 容器 |
+| | `external` | **不启动**，用你的 PostgreSQL（需填 `YIYI_DB_HOST`） |
+| `YIYI_REDIS_MODE` | `bundled`（默认） | `control` 上启动 `redis` 容器 |
+| | `external` | **不启动**，用你的 Redis（需填 `YIYI_REDIS_HOST`） |
+
+两者**独立**，支持任意组合：
+
+```bash
+# 外部 PostgreSQL + 自带 Redis
+YIYI_DB_MODE=external
+YIYI_DB_HOST=db.internal
+YIYI_DB_USER=yiyi
+YIYI_DB_PASSWORD=<外部库口令>
+YIYI_REDIS_MODE=bundled
+```
+
+```bash
+# 数据库与 Redis 都用外部（control 只剩 2 个容器：license-agent、config）
+YIYI_DB_MODE=external
+YIYI_DB_HOST=db.internal
+YIYI_DB_USER=yiyi
+YIYI_DB_PASSWORD=<外部库口令>
+YIYI_REDIS_MODE=external
+YIYI_REDIS_HOST=redis.internal
+YIYI_REDIS_PASSWORD=<外部缓存口令>
+```
+
+其他角色（`user` / `media` / `edge`）通过 `.env` 的
+`YIYI_DB_HOST` / `YIYI_REDIS_HOST` 指向 `control` 或你的外部实例，
+它们不涉及这两个 mode 变量。
+
+::: warning 使用外部 PostgreSQL 的前置条件
+外部实例需预先建好 `yiyi_config`、`yiyi_user`、`yiyi_media`、`yiyi_storage`
+四个库与 `yiyi` 角色，可参考本仓库的 `postgres-init.sql`。
+:::
+
+### 实现说明
+
+`control` 的服务用 profile `control` 启停，而 Compose 的 profile 是**「或」**
+语义——启用 `control` 必然带起 postgres/redis，无法用 profile 单独剔除。
+因此这两个服务改用 `deploy.replicas`（`YIYI_POSTGRES_REPLICAS` /
+`YIYI_REDIS_REPLICAS`）控制，安装脚本按上面的 mode 写 0 或 1。
 
 ## 安全红线
 

@@ -8,6 +8,9 @@
 #   * Storage 与 Play Agent 是外部工作节点，不由本文件安装，在网页「节点管理」创建后
 #     自助部署（安装脚本与节点二进制由 config 服务分发）；
 #   * 分布式部署只接受 edition=DISTRIBUTED 的许可证（计划 §8.7）。
+#   * control 角色的 PostgreSQL 与 Redis 可任选自带或外部，两者互相独立：
+#       YIYI_DB_MODE=bundled|external      PostgreSQL
+#       YIYI_REDIS_MODE=bundled|external   Redis
 #
 # 使用方式：安装脚本 install-distributed.sh 会按 .env 里的 YIYI_DEPLOY_ROLE 写入
 # COMPOSE_PROFILES，之后直接 `docker compose -f compose.distributed.yaml ps` 即可。
@@ -32,8 +35,10 @@ services:
     profiles: ["control"]
     image: postgres:16.4
     restart: unless-stopped
+    # 是否在本机启动数据库由 replicas 控制（YIYI_DB_MODE=external 时安装脚本写 0）。
+    # 这里不用 profile 排除：本服务的 profile 是 control，而 profile 是"或"语义，
+    # 只要启用了 control 就会把 postgres 一起带起来，无法单独剔除。
     deploy:
-      # external 模式下安装脚本写入 0；旧部署未设置时保持 1，避免升级时误停数据库。
       replicas: ${YIYI_POSTGRES_REPLICAS:-1}
     environment:
       POSTGRES_USER: ${YIYI_DB_USER:?请设置 YIYI_DB_USER}
@@ -45,7 +50,7 @@ services:
       - ./postgres-init.sql:/docker-entrypoint-initdb.d/00-init-yiyi.sql:ro
     ports:
       # control 角色下绑到 YIYI_INFRA_BIND_HOST（本机内网地址），供 user / media 连接。
-      # external 模式下由安装脚本把 replicas 置 0，本服务不启动。
+      # 用外部数据库时由安装脚本把 replicas 置 0，本服务不启动。
       - "${YIYI_INFRA_BIND_HOST:-127.0.0.1}:${YIYI_DB_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d postgres"]
@@ -58,6 +63,10 @@ services:
     profiles: ["control"]
     image: redis:7.4-alpine
     restart: unless-stopped
+    # 同 postgres：YIYI_REDIS_MODE=external 时安装脚本写 0，使用外部 Redis。
+    # 与数据库**独立**选择，因此支持"外部数据库 + 自带 Redis"等任意组合。
+    deploy:
+      replicas: ${YIYI_REDIS_REPLICAS:-1}
     command:
       - sh
       - -ec
