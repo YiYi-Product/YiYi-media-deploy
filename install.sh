@@ -366,13 +366,29 @@ sync_license_public_key() {
   local server_url target temp kid fetched
   server_url="$(env_value .env YIYI_LICENSE_SERVER_URL)"
   server_url="${server_url%/}"
-  [[ "$server_url" =~ ^https://[0-9A-Za-z._-]+(:[0-9]{1,5})?$ ]] || {
+  # 默认要求远端 HTTPS 授权中心。
+  # 例外：允许 http://127.0.0.1:<port> —— 即客户把自建授权中心跑在**同一台主机**上
+  # （本地/内网离线部署的常见形态）。此时到 127.0.0.1 的传输不经过任何网络，
+  # 上 TLS 不提供额外机密性，反而要求客户为回环地址签发证书。
+  # 注意本函数仍会强校验公钥与镜像内置信任根一致，安全性不依赖传输层。
+  local allow_loopback_http=false
+  if [[ "$server_url" =~ ^http://127\.0\.0\.1:[0-9]{1,5}$ ]] \
+     || [[ "$server_url" =~ ^http://host\.docker\.internal:[0-9]{1,5}$ ]]; then
+    allow_loopback_http=true
+  fi
+  if [[ "$allow_loopback_http" != true && ! "$server_url" =~ ^https://[0-9A-Za-z._-]+(:[0-9]{1,5})?$ ]]; then
     echo "YIYI_LICENSE_SERVER_URL 必须是不带路径的 HTTPS 地址" >&2
+    echo "（本机自建授权中心可用 http://127.0.0.1:<端口> 或 http://host.docker.internal:<端口>）" >&2
     return 1
-  }
+  fi
   target="$DEPLOY_DIR/config/license-public.runtime.jwk"
   temp="$(mktemp "$DEPLOY_DIR/config/license-public.runtime.jwk.XXXXXX")"
-  if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+  local curl_proto=(--proto '=https' --proto-redir '=https' --tlsv1.2)
+  if [[ "$allow_loopback_http" == true ]]; then
+    # 回环地址：TLS 无意义，且客户端通常没有为 127.0.0.1 签发的证书。
+    curl_proto=(--proto '=http')
+  fi
+  if ! curl "${curl_proto[@]}" \
       --fail --silent --show-error "$server_url/api/v1/public-keys" | \
     python3 -c '
 import json, sys
