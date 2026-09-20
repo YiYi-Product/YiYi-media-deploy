@@ -726,6 +726,17 @@ except Exception:
       return 0
       ;;
     ACTIVE|GRACE) ;;
+    DEACTIVATED)
+      echo "  许可证不可用：本机已反激活（state=DEACTIVATED）。" >&2
+      echo "  如果是换机迁移，请在新机器上用迁移码激活；如需在本机恢复，请联系发布方。" >&2
+      return 1
+      ;;
+    CONFLICTED)
+      echo "  许可证不可用：检测到同一份授权在多台机器上同时运行，已被自动阻断。" >&2
+      echo "  请停掉多余的机器（尤其是迁移后未停的旧机器），只保留一台，再联系发布方解除阻断。" >&2
+      echo "  数据没有被删除。" >&2
+      return 1
+      ;;
     *)
       echo "  许可证不可用（state=${state:-无法解析}）：$body" >&2
       return 1
