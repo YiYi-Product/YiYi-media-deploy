@@ -100,8 +100,23 @@ fi
 [[ "$public_host" =~ ^[0-9A-Za-z._-]+$ ]] || { echo "YIYI_PUBLIC_HOST 格式无效" >&2; exit 1; }
 
 installed=false
-if [[ -f .installed || -s .role ]]; then
+if [[ -f .installed || -s .role || -s .deployment-mode ]]; then
   installed=true
+fi
+# 跨形态守卫：本目录若已装成单机版（main 分支），不允许原地改成分布式。
+# 单机版与分布式版互转必须同时完成许可证 Edition 变更、部署拓扑迁移与数据校验，
+# 只换分支/改 Compose 文件不会生效，继续下去只会得到一个半坏的部署。
+if [[ -s .deployment-mode ]]; then
+  installed_mode="$(tr -d '[:space:]' < .deployment-mode)"
+  if [[ "$installed_mode" != "DISTRIBUTED" ]]; then
+    cat >&2 <<EOF
+本目录已安装为 ${installed_mode}，不能原地改成分布式形态。
+
+单机版与分布式版互转必须同时完成许可证 Edition 变更、部署拓扑迁移和数据校验。
+请不要在这里继续；迁移步骤见 main 分支的 MIGRATION.md。
+EOF
+    exit 1
+  fi
 fi
 if [[ -s .role ]]; then
   installed_role="$(tr -d '[:space:]' < .role)"
