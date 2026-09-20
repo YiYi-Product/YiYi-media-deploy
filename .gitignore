@@ -1,11 +1,25 @@
+# 凭据与运行态文件：绝不提交。
 .env
+.env.*.local
 .role
+.deployment-mode
+.installed
+.named-volumes-migrated
+
+# 分布式部署的集群加入凭据：含数据库口令、服务令牌与集群同步令牌。
 join.env
 config/cluster-relay.crt
 config/cluster-relay.key
+
+# 授权公钥（安装脚本可重新同步）与运行态的授权数据。
+config/license-public.runtime.jwk
+
+# 客户数据与备份：包括 PostgreSQL、Redis、Storage spool、许可证身份与上传文件。
 data/
 backups/
-.installed
-.named-volumes-migrated
-config/license-public.runtime.jwk
+
+# 迁移预检产出的报告：含节点 ID、引用数量与拓扑信息，不进仓库。
+migration-report-*.md
+migration-report-*.json
+
 *.log
