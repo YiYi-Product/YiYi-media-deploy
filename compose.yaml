@@ -62,11 +62,11 @@ services:
       # 由安装脚本固定为 STANDALONE。它只用于收窄能力：产品版本边界始终以
       # 签名租约中的 edition claim 为准，改这里不会扩大授权范围。
       YIYI_DEPLOYMENT_MODE: STANDALONE
-  # 内置节点 ID。全新安装用默认值 node-local-*；从旧部署迁入单机版时，
-  # 安装脚本会写入**原有节点 ID**，让内置节点沿用原记录，
-  # 从而保住宿主媒体源的 nodeId 引用、用户线路授权与历史任务关联（计划 §7.2、§13.2）。
-  YIYI_EMBEDDED_STORAGE_NODE_ID: ${YIYI_EMBEDDED_STORAGE_NODE_ID:-node-local-storage}
-  YIYI_EMBEDDED_PLAY_AGENT_NODE_ID: ${YIYI_EMBEDDED_PLAY_AGENT_NODE_ID:-node-local-play-agent}
+      # 内置节点 ID。全新安装用默认值 node-local-*；从旧部署迁入单机版时，
+      # 安装脚本会写入**原有节点 ID**，让内置节点沿用原记录，
+      # 从而保住宿主媒体源的 nodeId 引用、用户线路授权与历史任务关联（计划 §7.2、§13.2）。
+      YIYI_EMBEDDED_STORAGE_NODE_ID: ${YIYI_EMBEDDED_STORAGE_NODE_ID:-node-local-storage}
+      YIYI_EMBEDDED_PLAY_AGENT_NODE_ID: ${YIYI_EMBEDDED_PLAY_AGENT_NODE_ID:-node-local-play-agent}
 
       # ── 数据库（计划 §5.3、§6）───────────────────────────────────────
       # 容器内通过服务名 postgres 互访（不是 127.0.0.1）；四个业务库在同一个
