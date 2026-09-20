@@ -1,176 +1,52 @@
-# YiYi Media 单机版部署（STANDALONE）—— 严格三容器 Compose。
+# YiYi Media 分布式部署 —— 控制面同机形态（v2-all-in-one）。
 #
-# 适用模式：单机版部署。分布式部署请改用 compose.distributed.yaml
-# （安装脚本为 install-distributed.sh）。
+# 适用场景：一台服务器承载**全部控制面服务**，播放与存储能力由外部工作节点提供。
 #
-# 标准拓扑（单机版开发计划 §3.2、§5.3、§12.1）：
+#   本机容器：frontend(18080) gateway(18086) config(18085) user(18082)
+#             media(18083) license-agent(18088) postgres(5432) redis(6379)
+#   外部节点：Storage 与 Play Agent **不在本文件里**。在网页「节点管理」新增节点后，
+#             用页面给出的一键命令部署到其他机器（安装脚本与二进制由 config 分发）。
 #
-#   ┌────────────── yiyi-app 容器 ──────────────┐
-#   │ frontend/nginx  :18080  ← 唯一对外入口     │
-#   │ gateway        :18086  仅容器内部          │
-#   │ config         :18085  仅容器内部          │
-#   │ user           :18082  仅容器内部          │
-#   │ media          :18083  仅容器内部          │
-#   │ storage        :18084  仅容器内部          │
-#   │ play-agent     :19090  对外（播放客户端直连） │
-#   │ license-agent  :18088  仅容器内部          │
-#   └───────────────────────────────────────────┘
-#              │                    │
-#        postgres 容器        redis 容器
+# 三种部署形态的区别（各占一个 Git 分支）：
+#   * main（v1-standalone）：yiyi-app + postgres + redis 三容器，节点内置、不能新增；
+#   * v2-all-in-one（本分支）：控制面全部同机，工作节点在外部；
+#   * v3-multi-host：控制面按 control / user / media / edge 角色分散到多台机器。
 #
-# 硬性约束：
-#   * 本文件解析后只能出现 yiyi-app、postgres、redis 三个服务，不使用 profile；
-#   * PostgreSQL 与 Redis 走 Compose 私有网络，默认不向宿主机发布任何端口；
-#   * 应用容器发布前端 18080 与 Play Agent 19090（播放客户端要直连）；
-#   * 应用容器不使用 privileged、不授予 SYS_ADMIN、不挂载 /dev/fuse（计划 §11）；
-#   * 镜像标签统一由 YIYI_IMAGE_TAG 锁定。
+# 许可证要求：edition=DISTRIBUTED（计划 §8.7）。单机版许可证会被拒绝。
+#
+# 用法：配置好 .env 后执行 ./install.sh，之后可直接 docker compose pull && docker compose up -d。
 
 name: yiyi
-
-# 许可证相关环境变量。聚合镜像内的 license-agent、config、user、media、gateway
-# 都读取同一组路径（计划 §12.1 的对外契约）。
-x-yiyi-license-env: &yiyi-license-env
+x-license-env: &license-env
   YIYI_LICENSE_LEASE_FILE: /var/run/yiyi-license/lease.jwt
   YIYI_LICENSE_PUBLIC_JWK_FILE: /etc/yiyi/license-public.jwk
   YIYI_LICENSE_NATIVE_REQUIRED: "true"
   YIYI_LICENSE_NATIVE_LIBRARY: /opt/yiyi/lib/libyiyi_license_native.so
-  YIYI_LICENSE_STATE_DIR: /var/lib/yiyi-license
-  YIYI_LICENSE_ACTIVATION_FILE: /var/lib/yiyi-license/activation-code
-
 services:
-  yiyi-app:
-    image: ghcr.io/yiyi-product/yiyi-media-standalone:${YIYI_IMAGE_TAG:-latest}
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    # 允许容器访问**宿主机**上的服务。内网/离线部署时客户可能把授权中心
-    # 部署在同一台主机上，此时 YIYI_LICENSE_SERVER_URL 可写
-    # http://host.docker.internal:18092（见 README「本机自建授权中心」）。
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    # 聚合容器承载全部服务，因此更不能提权：只做「禁止通过 setuid 提权」这一项收敛，
-    # 不添加任何 capability、不使用 privileged，也不挂载 /dev/fuse（计划 §3.4、§11）。
-    security_opt:
-      - no-new-privileges:true
-    environment:
-      <<: *yiyi-license-env
-
-      # ── 部署形态（计划 §3.1、§12.2）──────────────────────────────────
-      # 由安装脚本固定为 STANDALONE。它只用于收窄能力：产品版本边界始终以
-      # 签名租约中的 edition claim 为准，改这里不会扩大授权范围。
-      YIYI_DEPLOYMENT_MODE: STANDALONE
-      # 内置节点 ID。全新安装用默认值 node-local-*；从旧部署迁入单机版时，
-      # 安装脚本会写入**原有节点 ID**，让内置节点沿用原记录，
-      # 从而保住宿主媒体源的 nodeId 引用、用户线路授权与历史任务关联（计划 §7.2、§13.2）。
-      YIYI_EMBEDDED_STORAGE_NODE_ID: ${YIYI_EMBEDDED_STORAGE_NODE_ID:-node-local-storage}
-      YIYI_EMBEDDED_PLAY_AGENT_NODE_ID: ${YIYI_EMBEDDED_PLAY_AGENT_NODE_ID:-node-local-play-agent}
-      # 部署时填写的公网地址/域名：作为内置节点首次创建时的默认「对外地址」，
-      # 让用户播放线路开箱可用。管理员随后可在节点管理页面改成自己的反代域名。
-      YIYI_PUBLIC_HOST: ${YIYI_PUBLIC_HOST:-}
-
-      # ── 数据库（计划 §5.3、§6）───────────────────────────────────────
-      # 容器内通过服务名 postgres 互访（不是 127.0.0.1）；四个业务库在同一个
-      # PostgreSQL 实例上。
-      #
-      # 为什么同时给 YIYI_DB_* 和 SPRING_DATASOURCE_* 两组：
-      # 聚合镜像的进程监管器（deploy/standalone-app/supervisor.py）按服务逐个
-      # 拼接连接串，用的是 ${YIYI_DB_USER} / ${YIYI_DB_PASSWORD} 占位符，
-      # 从容器环境展开；缺一个就会在日志里留下"引用未定义变量"的告警，
-      # 并让该服务连到错库或用空口令启动。两组都必须提供。
-      YIYI_DB_HOST: postgres
-      YIYI_DB_PORT: "5432"
-      YIYI_DB_USER: ${YIYI_DB_USER:-yiyi}
-      YIYI_DB_PASSWORD: ${YIYI_DB_PASSWORD:?请设置 YIYI_DB_PASSWORD}
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/yiyi_config
-      SPRING_DATASOURCE_USERNAME: ${YIYI_DB_USER:-yiyi}
-      SPRING_DATASOURCE_PASSWORD: ${YIYI_DB_PASSWORD:?请设置 YIYI_DB_PASSWORD}
-
-      # ── Redis ────────────────────────────────────────────────────────
-      # 同样同时给两组：REDIS_* 是各服务最终读取的名字，YIYI_REDIS_PASSWORD
-      # 是监管器占位符展开时需要从容器环境取到的名字。留空表示不启用密码。
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-      REDIS_PASSWORD: ${YIYI_REDIS_PASSWORD:-}
-      YIYI_REDIS_PASSWORD: ${YIYI_REDIS_PASSWORD:-}
-
-      # ── 服务间令牌 ───────────────────────────────────────────────────
-      YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN:?请设置高熵服务令牌}
-
-      # ── 许可证 ───────────────────────────────────────────────────────
-      YIYI_LICENSE_SERVER_URL: ${YIYI_LICENSE_SERVER_URL:?请设置授权服务器 HTTPS 地址}
-      # 供镜像内各服务上报客户端版本（license-agent 的 YIYI_LICENSE_CLIENT_VERSION）。
-      YIYI_IMAGE_TAG: ${YIYI_IMAGE_TAG:-latest}
-
-      # ── 日志根目录（计划 §6）─────────────────────────────────────────
-      LOG_DIR: /data/logs
-
-      # ── 第三方登录（可选，保持现有变量名）────────────────────────────
-      YIYI_TELEGRAM_BOT_TOKEN: ${YIYI_TELEGRAM_BOT_TOKEN:-}
-      YIYI_TELEGRAM_BOT_USERNAME: ${YIYI_TELEGRAM_BOT_USERNAME:-}
-      YIYI_TELEGRAM_MINIAPP_URL: ${YIYI_TELEGRAM_MINIAPP_URL:-}
-      YIYI_TELEGRAM_WEBHOOK_SECRET: ${YIYI_TELEGRAM_WEBHOOK_SECRET:-}
-      YIYI_GOOGLE_CLIENT_ID: ${YIYI_GOOGLE_CLIENT_ID:-}
-    volumes:
-      # 许可证身份与租约（计划 §6）
-      - type: bind
-        source: ${YIYI_DATA_DIR:-./data}/license/identity
-        target: /var/lib/yiyi-license
-      - type: bind
-        source: ${YIYI_DATA_DIR:-./data}/license/lease
-        target: /var/run/yiyi-license
-      # 授权公钥（信任根）。由 install.sh 从授权服务器同步并做一致性校验后写入。
-      - ./config/license-public.runtime.jwk:/etc/yiyi/license-public.jwk:ro
-      # 上传文件
-      - type: bind
-        source: ${YIYI_DATA_DIR:-./data}/config/uploads
-        target: /data/config/uploads
-      # 内置 Storage 的持久化数据：mount-data / spool / read-cache
-      - type: bind
-        source: ${YIYI_DATA_DIR:-./data}/storage
-        target: /data/storage
-      # 内置 Play Agent 缓存：vfs-cache / image-cache
-      - type: bind
-        source: ${YIYI_DATA_DIR:-./data}/play-agent
-        target: /data/play-agent
-      # 七个服务的日志目录
-      - type: bind
-        source: ${YIYI_DATA_DIR:-./data}/logs
-        target: /data/logs
-    ports:
-      # Web 入口（后台与用户门户）。
-      - "${YIYI_APP_BIND_HOST:-0.0.0.0}:${YIYI_APP_PORT:-18080}:18080"
-      # Play Agent 是播放客户端**直连**的端口，必须真正对外发布。
-      # 默认绑 0.0.0.0；若前面有 Caddy/nginx 反代，可改为 127.0.0.1，
-      # 并在「节点管理」里把该节点的对外地址改成反代域名与端口。
-      - "${YIYI_PLAY_AGENT_BIND_HOST:-0.0.0.0}:${YIYI_PLAY_AGENT_PORT:-19090}:19090"
-    # 沿用聚合镜像自带的 HEALTHCHECK（/opt/yiyi/healthcheck.py）：它不只看进程存活，
-    # 而是逐一确认全部内部服务与两个内置节点的状态（计划 §5.2、§16）。
-
   postgres:
     image: postgres:16.4
     restart: unless-stopped
+    deploy:
+      # external 模式下安装脚本写入 0；旧部署未设置时保持 1，避免升级时误停数据库。
+      replicas: ${YIYI_POSTGRES_REPLICAS:-1}
     environment:
-      POSTGRES_USER: ${YIYI_DB_USER:-yiyi}
+      POSTGRES_USER: ${YIYI_DB_USER:?请设置 YIYI_DB_USER}
       POSTGRES_PASSWORD: ${YIYI_DB_PASSWORD:?请设置 YIYI_DB_PASSWORD}
     volumes:
       - type: bind
         source: ${YIYI_DATA_DIR:-./data}/postgres
         target: /var/lib/postgresql/data
-      # 仅在数据目录为空、PostgreSQL 首次初始化时执行，用于创建四个业务库。
-      # 升级旧数据目录时不会重新执行，缺失的库由 install.sh 幂等补齐。
       - ./postgres-init.sql:/docker-entrypoint-initdb.d/00-init-yiyi.sql:ro
-    # 不向宿主机发布端口：只允许 yiyi-app 通过 Compose 私有网络访问。
-    # 需要 psql 排障时用 `docker compose exec postgres psql ...`。
+    ports:
+      # control 角色下绑到 YIYI_INFRA_BIND_HOST（本机内网地址），供 user / media 连接。
+      # external 模式下由安装脚本把 replicas 置 0，本服务不启动。
+      - "${YIYI_INFRA_BIND_HOST:-127.0.0.1}:${YIYI_DB_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d postgres"]
       interval: 5s
       timeout: 3s
       retries: 20
       start_period: 10s
-
   redis:
     image: redis:7.4-alpine
     restart: unless-stopped
@@ -188,9 +64,191 @@ services:
       - type: bind
         source: ${YIYI_DATA_DIR:-./data}/redis
         target: /data
-    # 同样不发布端口：PostgreSQL、Redis 都只在 yiyi-app 所在网络内可达。
+    ports:
+      - "${YIYI_INFRA_BIND_HOST:-127.0.0.1}:${YIYI_REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD-SHELL", "if [ -n \"$${REDIS_PASSWORD}\" ]; then redis-cli -a \"$${REDIS_PASSWORD}\" ping 2>/dev/null; else redis-cli ping; fi | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 20
+  license-agent:
+    image: ghcr.io/yiyi-product/yiyi-media-license-agent:${YIYI_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      YIYI_LICENSE_SERVER_URL: ${YIYI_LICENSE_SERVER_URL:?请设置授权服务器 HTTPS 地址}
+      YIYI_LICENSE_STATE_DIR: /var/lib/yiyi-license
+      YIYI_LICENSE_LEASE_FILE: /var/run/yiyi-license/lease.jwt
+      YIYI_LICENSE_ACTIVATION_FILE: /var/lib/yiyi-license/activation-code
+      YIYI_LICENSE_PUBLIC_JWK_FILE: /etc/yiyi/license-public.jwk
+      YIYI_LICENSE_AGENT_LISTEN: 127.0.0.1:18088
+      # 集群同步 Relay：只有 control 需要对外提供服务。
+      YIYI_LICENSE_RELAY_LISTEN: ${YIYI_LICENSE_RELAY_LISTEN:-}
+      YIYI_LICENSE_RELAY_TLS_CERT_FILE: /etc/yiyi/cluster-relay.crt
+      YIYI_LICENSE_RELAY_TLS_KEY_FILE: /etc/yiyi/cluster-relay.key
+      YIYI_LICENSE_CLUSTER_TOKEN: ${YIYI_LICENSE_CLUSTER_TOKEN:?请设置集群许可证同步令牌}
+      YIYI_LICENSE_CLIENT_VERSION: latest
+      YIYI_LICENSE_RENEW_INTERVAL: 15m
+    volumes:
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/license/identity
+        target: /var/lib/yiyi-license
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/license/lease
+        target: /var/run/yiyi-license
+      - ./config/license-public.runtime.jwk:/etc/yiyi/license-public.jwk:ro
+      - ./config/cluster-relay.crt:/etc/yiyi/cluster-relay.crt:ro
+      - ./config/cluster-relay.key:/etc/yiyi/cluster-relay.key:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:18088/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+  config:
+    image: ghcr.io/yiyi-product/yiyi-media-config:${YIYI_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      <<: *license-env
+      # 部署形态：Config 是能力边界的计算方（计划 §9.1）。它只用于收窄能力，
+      # 产品版本始终以签名租约的 edition claim 为准。
+      YIYI_DEPLOYMENT_MODE: DISTRIBUTED
+      SERVER_ADDRESS: 0.0.0.0
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${YIYI_DB_HOST:-127.0.0.1}:${YIYI_DB_PORT:-5432}/yiyi_config
+      SPRING_DATASOURCE_USERNAME: ${YIYI_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${YIYI_DB_PASSWORD}
+      CONFIG_REGISTRY_HOST: ${YIYI_ADVERTISE_HOST:?请设置本机可达地址}
+      CONFIG_REGISTRY_IP: ${YIYI_ADVERTISE_HOST}
+      YIYI_USER_SERVER_URL: http://${YIYI_USER_HOST:-127.0.0.1}:18082
+      YIYI_LICENSE_AGENT_URL: http://127.0.0.1:18088
+      YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN:?请设置高熵服务令牌}
+      YIYI_UPLOAD_DIR: /data/uploads
+      LOG_DIR: /data/logs
+    volumes:
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/license/lease
+        target: /var/run/yiyi-license
+        read_only: true
+      - ./config/license-public.runtime.jwk:/etc/yiyi/license-public.jwk:ro
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/config/uploads
+        target: /data/uploads
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/logs/config
+        target: /data/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18085/actuator/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+  user:
+    image: ghcr.io/yiyi-product/yiyi-media-user:${YIYI_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      <<: *license-env
+      SERVER_ADDRESS: 0.0.0.0
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${YIYI_DB_HOST:-127.0.0.1}:${YIYI_DB_PORT:-5432}/yiyi_user
+      SPRING_DATASOURCE_USERNAME: ${YIYI_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${YIYI_DB_PASSWORD}
+      REDIS_HOST: ${YIYI_REDIS_HOST:-127.0.0.1}
+      REDIS_PORT: ${YIYI_REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${YIYI_REDIS_PASSWORD:-}
+      USER_REGISTRY_CONFIG_SERVER: http://${YIYI_CONFIG_HOST:-127.0.0.1}:18085
+      USER_REGISTRY_HOST: ${YIYI_ADVERTISE_HOST:?请设置本机可达地址}
+      USER_REGISTRY_IP: ${YIYI_ADVERTISE_HOST}
+      YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN}
+      YIYI_TELEGRAM_BOT_TOKEN: ${YIYI_TELEGRAM_BOT_TOKEN:-}
+      YIYI_TELEGRAM_BOT_USERNAME: ${YIYI_TELEGRAM_BOT_USERNAME:-}
+      YIYI_TELEGRAM_MINIAPP_URL: ${YIYI_TELEGRAM_MINIAPP_URL:-}
+      YIYI_TELEGRAM_WEBHOOK_SECRET: ${YIYI_TELEGRAM_WEBHOOK_SECRET:-}
+      YIYI_GOOGLE_CLIENT_ID: ${YIYI_GOOGLE_CLIENT_ID:-}
+      LOG_DIR: /data/logs
+    volumes:
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/license/lease
+        target: /var/run/yiyi-license
+        read_only: true
+      - ./config/license-public.runtime.jwk:/etc/yiyi/license-public.jwk:ro
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/logs/user
+        target: /data/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18082/actuator/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+  media:
+    image: ghcr.io/yiyi-product/yiyi-media-media:${YIYI_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      <<: *license-env
+      SERVER_ADDRESS: 0.0.0.0
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${YIYI_DB_HOST:-127.0.0.1}:${YIYI_DB_PORT:-5432}/yiyi_media
+      SPRING_DATASOURCE_USERNAME: ${YIYI_DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${YIYI_DB_PASSWORD}
+      REDIS_HOST: ${YIYI_REDIS_HOST:-127.0.0.1}
+      REDIS_PORT: ${YIYI_REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${YIYI_REDIS_PASSWORD:-}
+      MEDIA_CONFIG_SERVER_URL: http://${YIYI_CONFIG_HOST:-127.0.0.1}:18085
+      MEDIA_REGISTRY_HOST: ${YIYI_ADVERTISE_HOST:?请设置本机可达地址}
+      MEDIA_REGISTRY_IP: ${YIYI_ADVERTISE_HOST}
+      YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN}
+      LOG_DIR: /data/logs
+    volumes:
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/license/lease
+        target: /var/run/yiyi-license
+        read_only: true
+      - ./config/license-public.runtime.jwk:/etc/yiyi/license-public.jwk:ro
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/logs/media
+        target: /data/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18083/actuator/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+  gateway:
+    image: ghcr.io/yiyi-product/yiyi-media-gateway:${YIYI_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      <<: *license-env
+      SERVER_ADDRESS: 0.0.0.0
+      SERVER_PORT: "18086"
+      YIYI_UPSTREAM_CONFIG: http://${YIYI_CONFIG_HOST:-127.0.0.1}:18085
+      YIYI_UPSTREAM_USER: http://${YIYI_USER_HOST:-127.0.0.1}:18082
+      GATEWAY_REGISTRY_HOST: ${YIYI_ADVERTISE_HOST:?请设置本机可达地址}
+      GATEWAY_REGISTRY_PORT: "18086"
+      YIYI_LOCAL_HOST_REWRITE: ${YIYI_ADVERTISE_HOST}
+      YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN}
+      LOG_DIR: /data/logs
+    volumes:
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/license/lease
+        target: /var/run/yiyi-license
+        read_only: true
+      - ./config/license-public.runtime.jwk:/etc/yiyi/license-public.jwk:ro
+      - type: bind
+        source: ${YIYI_DATA_DIR:-./data}/logs/gateway
+        target: /data/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18086/actuator/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+  frontend:
+    image: ghcr.io/yiyi-product/yiyi-media-frontend:${YIYI_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    network_mode: host
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:18080/"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
