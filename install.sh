@@ -693,6 +693,67 @@ ensure_databases() {
   echo "四个业务库检查完成（新建 $created 个）"
 }
 
+
+# ── 迁移：沿用原有 Storage / Play Agent 节点 ID（计划 §7.2、§13.2）────────────
+#
+# 单机版内置节点的默认 ID 是 node-local-storage / node-local-play-agent。
+# 但既有部署的节点 ID 是随机生成的，而 media 库里大量记录用 node_id 引用它
+# （媒体源、用户线路授权、手动反代归属、历史任务）。若直接用默认 ID 新建内置节点，
+# 原节点记录会永远离线，且这些引用全部失联。
+#
+# 因此这里在**启动应用容器之前**读取现有受管节点，把原有的唯一节点 ID 写进
+# .env 供内置节点沿用。只读查询 + 写 .env，不修改任何节点数据；
+# 真正的标记动作由 Config 的 EmbeddedNodeInitializer 幂等完成。
+adopt_legacy_embedded_node_ids() {
+  local storage_id play_id count_storage count_play
+  # 只查数据库；库还不存在（全新安装）时直接返回。
+  count_storage="$(query_managed_node_count YiYi-control-storage 2>/dev/null || echo 0)"
+  count_play="$(query_managed_node_count YiYi-play-agent 2>/dev/null || echo 0)"
+  if [[ "${count_storage:-0}" == "0" && "${count_play:-0}" == "0" ]]; then
+    return 0
+  fi
+
+  if [[ "${count_storage:-0}" -gt 1 || "${count_play:-0}" -gt 1 ]]; then
+    cat >&2 <<EOF
+检测到同一服务类型存在多个节点，不能自动迁移（计划 §13.3）：
+
+  Storage   节点数：${count_storage:-0}
+  Play Agent 节点数：${count_play:-0}
+
+请先运行 ./migrate-precheck.sh 生成影响报告，由管理员明确选择保留哪一个节点，
+再把 YIYI_EMBEDDED_STORAGE_NODE_ID / YIYI_EMBEDDED_PLAY_AGENT_NODE_ID 手动填成
+被选中的节点 ID 后重新执行本脚本。未选中的节点会保留记录，不会被删除。
+EOF
+    return 1
+  fi
+
+  storage_id="$(query_single_managed_node_id YiYi-control-storage 2>/dev/null || true)"
+  play_id="$(query_single_managed_node_id YiYi-play-agent 2>/dev/null || true)"
+  if [[ -n "$storage_id" ]]; then
+    set_env_value .env YIYI_EMBEDDED_STORAGE_NODE_ID "$storage_id"
+    echo "  沿用原 Storage 节点 ID：$storage_id"
+  fi
+  if [[ -n "$play_id" ]]; then
+    set_env_value .env YIYI_EMBEDDED_PLAY_AGENT_NODE_ID "$play_id"
+    echo "  沿用原 Play Agent 节点 ID：$play_id"
+  fi
+  return 0
+}
+
+# 读取受管节点表的查询助手。表不存在（尚未迁移）时返回 0 / 空，
+# 让全新安装路径不受影响。
+query_managed_node_count() {
+  compose exec -T postgres psql -U "$db_user" -d yiyi_config -tAc \
+    "SELECT count(*) FROM t_config_managed_node WHERE service_name='$1'" 2>/dev/null \
+    | tr -d '[:space:]'
+}
+
+query_single_managed_node_id() {
+  compose exec -T postgres psql -U "$db_user" -d yiyi_config -tAc \
+    "SELECT node_id FROM t_config_managed_node WHERE service_name='$1' ORDER BY created_at LIMIT 1" 2>/dev/null \
+    | tr -d '[:space:]'
+}
+
 # ── 主流程 ──────────────────────────────────────────────────────────────────
 
 # 这里**不再**自动 `git pull`。
@@ -717,12 +778,24 @@ fi
 sync_license_public_key
 preflight
 
-compose pull
+# 拉取镜像。离线/内网（air-gapped）环境可设置 YIYI_SKIP_PULL=1 使用本机已有镜像；
+# 此时镜像必须已经导入本机，脚本会在启动后由健康检查验证实际可用性。
+if [[ "${YIYI_SKIP_PULL:-0}" == "1" ]]; then
+  echo "已跳过镜像拉取（YIYI_SKIP_PULL=1），使用本机已有镜像"
+else
+  compose pull
+fi
 
 # 先只起基础设施，再补齐数据库，最后起应用容器：
 # 这样四个库在 Flyway 启动前就已就绪，升级旧数据目录也不会漏库。
 compose up -d postgres redis --wait --wait-timeout 300
 ensure_databases
+
+# 迁移场景：沿用原有节点 ID，避免媒体源引用与线路授权失联。
+if [[ -n "$legacy_reason" ]]; then
+  echo "正在检查是否需要沿用原有节点 ID"
+  adopt_legacy_embedded_node_ids
+fi
 
 if [[ -n "$legacy_reason" ]]; then
   # 迁移路径：保留旧容器，因此不加 --remove-orphans（计划 §13.4）。
