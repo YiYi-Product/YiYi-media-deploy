@@ -88,6 +88,10 @@ git pull --ff-only
 sudo ./install.sh          # 幂等
 ```
 
+当升级首次引入 `YIYI_NODE_TOKEN` 的旧部署时，先在 control 运行脚本生成新的 `join.env`，
+再把它重新分发到 user / media / edge 后依次升级。其他角色不会各自生成节点密钥，
+避免同一集群出现多把不一致的密钥。控制面升级后，还需对已有 Storage / Play Agent 执行一次新版节点升级命令。
+
 也可以用原生 Compose 命令（`.env` 已就绪时自动读取 profile）：
 
 ```bash

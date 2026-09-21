@@ -199,7 +199,7 @@ chmod 0600 backups/yiyi-files-*.tar.gz
 ```
 
 ::: danger 这个归档含全部凭据与私钥
-`.env` 里有数据库口令、服务令牌（分布式版还有集群同步令牌），
+`.env` 里有数据库口令、服务令牌、节点令牌（分布式版还有集群同步令牌），
 `config/cluster-relay.key` 是集群同步私钥。归档权限设 `0600`，
 存到部署机之外的安全位置，不要放进任何仓库或共享目录。
 :::
@@ -296,8 +296,9 @@ docker compose exec postgres psql -U "$YIYI_DB_USER" -d yiyi_config
   取回的公钥必须与镜像内置的厂商公钥一致，否则安装会**直接失败**（这是有意设计，
   避免产出「安装成功但全站 403」的部署）。厂商轮换签名密钥时，需先升级到包含新公钥
   白名单的镜像版本，再更新安装脚本中的 `YIYI_TRUSTED_LICENSE_PUBLIC_KEY`。
-- `YIYI_SERVICE_TOKEN` 在已有部署上**不可重新生成**：切换会导致现有节点鉴权失败。
+- `YIYI_SERVICE_TOKEN` 在已有部署上**不可重新生成**：切换会导致控制面服务间鉴权失效。
   恢复旧数据库时安装脚本会强制要求填写原值。
+- `YIYI_NODE_TOKEN` 只能由 control 生成并通过 `join.env` 分发；已有角色机器升级时需重新复制 `join.env`。
 - 单机版默认关闭主机 FUSE 挂载，聚合容器不使用 `privileged`、不授予 `SYS_ADMIN`、
   不挂载 `/dev/fuse`。`install.sh` 会把这几项作为 preflight 硬校验。
 - 生产环境应为网页入口配置 HTTPS。

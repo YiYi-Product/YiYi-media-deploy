@@ -148,7 +148,7 @@ fi
 
 cluster_keys=(
   YIYI_DB_HOST YIYI_REDIS_HOST YIYI_CONFIG_HOST YIYI_USER_HOST
-  YIYI_DB_USER YIYI_DB_PASSWORD YIYI_REDIS_PASSWORD YIYI_SERVICE_TOKEN
+  YIYI_DB_USER YIYI_DB_PASSWORD YIYI_REDIS_PASSWORD YIYI_SERVICE_TOKEN YIYI_NODE_TOKEN
   YIYI_LICENSE_CLUSTER_TOKEN YIYI_LICENSE_SERVER_URL
   YIYI_LICENSE_SYNC_URL
 )
@@ -168,6 +168,11 @@ if [[ "$role" != "control" ]]; then
     done
     cp cluster-relay.crt config/cluster-relay.crt
     chmod 0644 config/cluster-relay.crt
+  fi
+  node_token="$(env_value .env YIYI_NODE_TOKEN)"
+  if [[ -z "$node_token" || "$node_token" == "GENERATE_ON_INSTALL" ]]; then
+    echo "$role 角色缺少 YIYI_NODE_TOKEN；请从 control 重新复制 join.env 后再升级" >&2
+    exit 1
   fi
 fi
 
@@ -388,7 +393,7 @@ if [[ "$role" == "control" ]]; then
       service_token="$(env_value .env YIYI_SERVICE_TOKEN)"
       if [[ -z "$service_token" || "$service_token" == "GENERATE_ON_INSTALL" ]]; then
         echo "检测到已有 PostgreSQL 数据，请在 .env 中填写原部署的 YIYI_SERVICE_TOKEN" >&2
-        echo "该 token 不保存在 data 目录；静默生成新值会导致现有 Storage/Play 节点鉴权失败" >&2
+        echo "该 token 不保存在 data 目录；静默生成新值会导致控制面服务间鉴权失效" >&2
         exit 1
       fi
     fi
@@ -396,6 +401,7 @@ if [[ "$role" == "control" ]]; then
   fi
   generate_optional_secret_if_requested YIYI_REDIS_PASSWORD
   generate_secret_if_needed YIYI_SERVICE_TOKEN
+  generate_secret_if_needed YIYI_NODE_TOKEN
   generate_secret_if_needed YIYI_LICENSE_CLUSTER_TOKEN
   generate_relay_certificate
 fi
@@ -488,7 +494,7 @@ preflight() {
     return 1
   fi
   local key value cluster_token
-  for key in YIYI_SERVER_HOST YIYI_ADVERTISE_HOST YIYI_DB_HOST YIYI_DB_PORT YIYI_DB_USER YIYI_DB_PASSWORD YIYI_SERVICE_TOKEN YIYI_LICENSE_CLUSTER_TOKEN; do
+  for key in YIYI_SERVER_HOST YIYI_ADVERTISE_HOST YIYI_DB_HOST YIYI_DB_PORT YIYI_DB_USER YIYI_DB_PASSWORD YIYI_SERVICE_TOKEN YIYI_NODE_TOKEN YIYI_LICENSE_CLUSTER_TOKEN; do
     value="$(env_value .env "$key")"
     [[ -n "$value" && "$value" != REPLACE_* ]] || { echo "缺少 $key" >&2; return 1; }
   done
