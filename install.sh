@@ -604,11 +604,18 @@ container_curl() {
   compose exec -T yiyi-app curl -fsS --max-time 10 "$@" "$url" >/dev/null
 }
 
-# 需要管理员/服务令牌的接口。令牌通过 curl 配置文件走 stdin，
+# 需要控制面服务身份的接口。令牌通过 curl 配置文件走 stdin，
 # 不出现在命令行参数里（避免进入宿主机与容器的进程列表）。
+#
+# 必须用 X-Internal-Token，**不能**用 X-Admin-Token：安全报告（2026-09-20）
+# 问题一之后内部身份已拆成独立命名空间，X-Admin-Token 的语义是「经网关的浏览器
+# 会话令牌」，网关会给每个转发请求注入它，因此服务端明确不承认它构成内部身份。
+# 内部身份只认 X-Internal-Token（值=集群服务令牌）与 X-Node-Token（值=节点令牌）。
+# 用 X-Admin-Token 调用 /api/config/nodes 会被 401 拒绝，脚本会误判"无法读取
+# 受管节点列表"，并掩盖内置节点真实状态。
 container_curl_with_token() {
   local url="$1" token="$2" body
-  body="$(printf 'header = "X-Admin-Token: %s"\n' "$token" \
+  body="$(printf 'header = "X-Internal-Token: %s"\n' "$token" \
     | compose exec -T yiyi-app curl -fsS --max-time 10 -K - "$url" 2>/dev/null || true)"
   [[ -n "$body" ]] || return 1
   printf '%s' "$body"
