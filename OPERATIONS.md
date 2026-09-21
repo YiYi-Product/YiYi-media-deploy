@@ -2,7 +2,7 @@
 
 本文覆盖两种部署模式的日常运维。**每节都标明适用模式**：
 
-- **单机版部署**（`STANDALONE`）：`yiyi-app` + `postgres` + `redis` 三个容器
+- **单机版部署**（`STANDALONE`）：`yiyi-media` + `postgres` + `redis` 三个容器
 - **分布式部署**（`DISTRIBUTED`）：控制面按 `control` / `user` / `media` / `edge` 角色拆分
 
 ## 安装与常用命令
@@ -23,8 +23,15 @@ docker compose start
 docker compose restart
 docker compose down
 docker compose up -d
-docker compose logs --tail=100 yiyi-app
+docker compose logs --tail=100 yiyi-media
 ```
+
+::: warning 从 `yiyi-app` 改名后首次升级要清理孤儿容器
+应用服务名已改为 `yiyi-media`（容器名 `YiYi-media`）。旧容器会成为孤儿并占着容器名，
+此时直接 `docker compose up -d` 会报容器名冲突。用
+`docker compose up -d --remove-orphans`，或直接跑 `sudo ./install.sh`。
+上面的 `docker compose down` 先执行也能避免该问题。
+:::
 
 ### 分布式部署
 

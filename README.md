@@ -7,7 +7,7 @@
 
 | 部署方式 | 分支 | 部署模式 | 拓扑 | 对应许可证 |
 | --- | --- | --- | --- | --- |
-| **单机版部署** | `main` | `STANDALONE` | 一台服务器，**三个容器**：`YiYi-media-standalone` + `-postgres` + `-redis` | `edition=STANDALONE` |
+| **单机版部署** | `main` | `STANDALONE` | 一台服务器，**三个容器**：`YiYi-media` + `-postgres` + `-redis` | `edition=STANDALONE` |
 | **分布式 · 控制面同机** | `v2-all-in-one` | `DISTRIBUTED` | 一台服务器跑全部控制面（6 个应用服务），工作节点在外部 | `edition=DISTRIBUTED` |
 | **分布式 · 按角色多机** | `v3-multi-host` | `DISTRIBUTED` | 控制面按 `control` / `user` / `media` / `edge` 拆到多台（同一私网） | `edition=DISTRIBUTED` |
 
@@ -27,7 +27,7 @@
 > 区别、停机顺序与注意事项见 [`OPERATIONS.md`](OPERATIONS.md) 的「换机迁移」。
 
 > 容器名与 Compose 服务名不是一回事：`docker compose` 用**服务名**
-> （`yiyi-app` / `postgres` / `redis`），`docker exec` 等直接用 `docker` 的命令用**容器名**。
+> （`yiyi-media` / `postgres` / `redis`），`docker exec` 等直接用 `docker` 的命令用**容器名**。
 
 ::: danger 跨模式不能靠换分支完成
 不允许只改 `.env`、Compose 文件或角色变量在**两种模式**之间切换。
@@ -48,7 +48,7 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `compose.yaml` | 三容器 Compose，解析后**严格只有** `yiyi-app`、`postgres`、`redis` 三个服务 |
+| `compose.yaml` | 三容器 Compose，解析后**严格只有** `yiyi-media`、`postgres`、`redis` 三个服务 |
 | `install.sh` | 安装 / 升级脚本 |
 | `.env.example` | 环境变量模板 |
 | `postgres-init.sql` | 首次初始化时创建四个业务库 |
@@ -56,9 +56,28 @@
 | `RELEASING.md` | 镜像发布说明（内部） |
 
 ::: tip 容器名与服务名不是一回事
-`docker compose` 的命令与日志过滤用**服务名**（`yiyi-app` / `postgres` / `redis`），
+`docker compose` 的命令与日志过滤用**服务名**（`yiyi-media` / `postgres` / `redis`），
 `docker exec`、`docker inspect` 等直接用 `docker` 的命令用**容器名**
-（`YiYi-media-standalone` / `YiYi-media-standalone-postgres` / `YiYi-media-standalone-redis`）。
+（`YiYi-media` / `YiYi-media-postgres` / `YiYi-media-redis`）。
+:::
+
+::: warning 从 `yiyi-app` 升级上来的部署：不要直接 `docker compose up -d`
+应用服务名已由 `yiyi-app` 改名为 `yiyi-media`（容器名同步由 `YiYi-media-standalone`
+改为 `YiYi-media`）。升级后旧容器会成为**孤儿容器**，而它仍占着容器名，直接
+`docker compose up -d` 会报：
+
+```text
+Error response from daemon: Conflict. The container name "/YiYi-media" is already in use
+```
+
+两种正确做法，任选其一：
+
+```bash
+sudo ./install.sh                 # 推荐：脚本内部用 --remove-orphans 清理旧容器
+docker compose up -d --remove-orphans   # 手工升级时必须显式加这个参数
+```
+
+`docker compose down` 也可先清掉旧容器再起。数据都在 `data/` 绑定挂载里，改名不影响数据。
 :::
 
 > 分布式方式（`v2-all-in-one` / `v3-multi-host`）的文件在各自分支的根目录，
@@ -136,7 +155,7 @@ sudo ./install.sh
 ```bash
 # 日常命令（单机版不需要 -f、--profile 或 --env-file）
 docker compose ps
-docker compose logs --tail=100 yiyi-app
+docker compose logs --tail=100 yiyi-media
 docker compose stop
 docker compose start
 ```

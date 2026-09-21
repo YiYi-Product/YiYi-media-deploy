@@ -5,7 +5,7 @@
 #
 # 标准拓扑（单机版开发计划 §3.2、§5.3、§12.1）：
 #
-#   ┌────────────── yiyi-app 容器 ──────────────┐
+#   ┌────────────── yiyi-media 容器 ──────────────┐
 #   │ frontend/nginx  :18080  ← 唯一对外入口     │
 #   │ gateway        :18086  仅容器内部          │
 #   │ config         :18085  仅容器内部          │
@@ -18,11 +18,11 @@
 #              │                    │
 #        postgres 容器        redis 容器
 #
-# 容器命名：单机版的三个容器前缀统一为 YiYi-media-standalone，
+# 容器命名：单机版的三个容器前缀统一为 YiYi-media，
 # 在共用宿主机上可与其它部署（或分布式形态）区分开。
 #
 # 硬性约束：
-#   * 本文件解析后只能出现 yiyi-app、postgres、redis 三个服务，不使用 profile；
+#   * 本文件解析后只能出现 yiyi-media、postgres、redis 三个服务，不使用 profile；
 #   * PostgreSQL 与 Redis 走 Compose 私有网络，默认不向宿主机发布任何端口；
 #   * 应用容器发布前端 18080 与 Play Agent 19090（播放客户端要直连）；
 #   * 应用容器不使用 privileged、不授予 SYS_ADMIN、不挂载 /dev/fuse（计划 §11）；
@@ -41,10 +41,10 @@ x-yiyi-license-env: &yiyi-license-env
   YIYI_LICENSE_ACTIVATION_FILE: /var/lib/yiyi-license/activation-code
 
 services:
-  yiyi-app:
+  yiyi-media:
     image: ghcr.io/yiyi-product/yiyi-media-standalone:${YIYI_IMAGE_TAG:-latest}
     # 固定容器名：单机版在宿主机上应当一眼可辨，避免与同机其它部署混淆。
-    container_name: YiYi-media-standalone
+    container_name: YiYi-media
     restart: unless-stopped
     depends_on:
       postgres:
@@ -168,7 +168,7 @@ services:
 
   postgres:
     image: postgres:16.4
-    container_name: YiYi-media-standalone-postgres
+    container_name: YiYi-media-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${YIYI_DB_USER:-yiyi}
@@ -180,7 +180,7 @@ services:
       # 仅在数据目录为空、PostgreSQL 首次初始化时执行，用于创建四个业务库。
       # 升级旧数据目录时不会重新执行，缺失的库由 install.sh 幂等补齐。
       - ./postgres-init.sql:/docker-entrypoint-initdb.d/00-init-yiyi.sql:ro
-    # 不向宿主机发布端口：只允许 yiyi-app 通过 Compose 私有网络访问。
+    # 不向宿主机发布端口：只允许 yiyi-media 通过 Compose 私有网络访问。
     # 需要 psql 排障时用 `docker compose exec postgres psql ...`。
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d postgres"]
@@ -191,7 +191,7 @@ services:
 
   redis:
     image: redis:7.4-alpine
-    container_name: YiYi-media-standalone-redis
+    container_name: YiYi-media-redis
     restart: unless-stopped
     command:
       - sh
@@ -207,7 +207,7 @@ services:
       - type: bind
         source: ${YIYI_DATA_DIR:-./data}/redis
         target: /data
-    # 同样不发布端口：PostgreSQL、Redis 都只在 yiyi-app 所在网络内可达。
+    # 同样不发布端口：PostgreSQL、Redis 都只在 yiyi-media 所在网络内可达。
     healthcheck:
       test: ["CMD-SHELL", "if [ -n \"$${REDIS_PASSWORD}\" ]; then redis-cli -a \"$${REDIS_PASSWORD}\" ping 2>/dev/null; else redis-cli ping; fi | grep -q PONG"]
       interval: 5s

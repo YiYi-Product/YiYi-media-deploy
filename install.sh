@@ -2,8 +2,8 @@
 #
 # YiYi Media 单机版部署（STANDALONE）安装 / 升级脚本。
 #
-# 适用模式：单机版部署（三容器：YiYi-media-standalone +
-#           YiYi-media-standalone-postgres + YiYi-media-standalone-redis）。
+# 适用模式：单机版部署（三容器：YiYi-media +
+#           YiYi-media-postgres + YiYi-media-redis）。
 # 分布式部署请使用 install-distributed.sh 与 compose.distributed.yaml。
 #
 # 本脚本只处理单机版路径，因此：
@@ -21,7 +21,7 @@ DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DEPLOY_DIR"
 
 COMPOSE_FILE="$DEPLOY_DIR/compose.yaml"
-EXPECTED_SERVICES="postgres redis yiyi-app"
+EXPECTED_SERVICES="postgres redis yiyi-media"
 # 单机版固定承载的四个业务库（计划 §6）。
 YIYI_DATABASES=(yiyi_config yiyi_user yiyi_media yiyi_storage)
 # 旧形态（同机多容器 / 分布式角色）的服务名。出现任意一个即说明本目录或本 Compose
@@ -590,7 +590,7 @@ EOF
                       SPRING_DATASOURCE_URL SPRING_DATASOURCE_USERNAME SPRING_DATASOURCE_PASSWORD \
                       REDIS_HOST REDIS_PORT YIYI_SERVICE_TOKEN YIYI_NODE_TOKEN YIYI_LICENSE_SERVER_URL LOG_DIR; do
     if ! printf '%s\n' "$resolved" | grep -Eq "^[[:space:]]*${required_var}:"; then
-      echo "compose.yaml 未向 yiyi-app 提供 ${required_var}，聚合镜像无法正确启动内部服务" >&2
+      echo "compose.yaml 未向 yiyi-media 提供 ${required_var}，聚合镜像无法正确启动内部服务" >&2
       return 1
     fi
   done
@@ -598,10 +598,10 @@ EOF
 
 # ── 容器内探测 ──────────────────────────────────────────────────────────────
 # 单机版默认只发布 18080 与回环 19090，其余端口只在容器内部，
-# 因此所有内部探测都必须在 yiyi-app 容器里执行。
+# 因此所有内部探测都必须在 yiyi-media 容器里执行。
 container_curl() {
   local url="$1"; shift
-  compose exec -T yiyi-app curl -fsS --max-time 10 "$@" "$url" >/dev/null
+  compose exec -T yiyi-media curl -fsS --max-time 10 "$@" "$url" >/dev/null
 }
 
 # 需要控制面服务身份的接口。令牌通过 curl 配置文件走 stdin，
@@ -616,7 +616,7 @@ container_curl() {
 container_curl_with_token() {
   local url="$1" token="$2" body
   body="$(printf 'header = "X-Internal-Token: %s"\n' "$token" \
-    | compose exec -T yiyi-app curl -fsS --max-time 10 -K - "$url" 2>/dev/null || true)"
+    | compose exec -T yiyi-media curl -fsS --max-time 10 -K - "$url" 2>/dev/null || true)"
   [[ -n "$body" ]] || return 1
   printf '%s' "$body"
 }
@@ -690,14 +690,14 @@ for node_id in ("node-local-storage", "node-local-play-agent"):
 # 因此 healthy 是"业务链路真的可用"的强判据（计划 §5.2、§16）。
 check_container_health() {
   local container_id status
-  container_id="$(compose ps -q yiyi-app)"
-  [[ -n "$container_id" ]] || { echo "yiyi-app 容器不存在" >&2; return 1; }
+  container_id="$(compose ps -q yiyi-media)"
+  [[ -n "$container_id" ]] || { echo "yiyi-media 容器不存在" >&2; return 1; }
   status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_id")"
   case "$status" in
-    healthy) echo "  yiyi-app 容器健康状态：healthy"; return 0 ;;
-    none) echo "  yiyi-app 未定义 HEALTHCHECK，无法据此判定" >&2; return 2 ;;
+    healthy) echo "  yiyi-media 容器健康状态：healthy"; return 0 ;;
+    none) echo "  yiyi-media 未定义 HEALTHCHECK，无法据此判定" >&2; return 2 ;;
     *)
-      echo "  yiyi-app 容器健康状态：$status" >&2
+      echo "  yiyi-media 容器健康状态：$status" >&2
       docker inspect --format '{{range .State.Health.Log}}{{.Output}}{{end}}' "$container_id" >&2 || true
       return 1
       ;;
@@ -712,7 +712,7 @@ check_license() {
   local token body state edition
   token="$(env_value .env YIYI_SERVICE_TOKEN)"
   if ! body="$(container_curl_with_token "http://127.0.0.1:18085/api/license/status" "$token")"; then
-    body="$(compose exec -T yiyi-app curl -fsS --max-time 10 http://127.0.0.1:18085/api/license/status 2>/dev/null || true)"
+    body="$(compose exec -T yiyi-media curl -fsS --max-time 10 http://127.0.0.1:18085/api/license/status 2>/dev/null || true)"
   fi
   [[ -n "$body" ]] || { echo "许可证状态接口不可达" >&2; return 1; }
 
@@ -771,7 +771,7 @@ EOF
 
 healthcheck() {
   local failures=0 result
-  echo "检查 yiyi-app 容器内的全部内部服务："
+  echo "检查 yiyi-media 容器内的全部内部服务："
   check_services || failures=$((failures + $?))
   echo "检查两个内置节点："
   check_embedded_nodes || {
@@ -940,9 +940,9 @@ chmod 0600 .installed
 cat <<EOF
 
 单机版部署完成：三个容器均已启动。
-  YiYi-media-standalone           应用（含全部内部服务与两个内置节点）
-  YiYi-media-standalone-postgres  数据库
-  YiYi-media-standalone-redis     缓存
+  YiYi-media           应用（含全部内部服务与两个内置节点）
+  YiYi-media-postgres  数据库
+  YiYi-media-redis     缓存
 
   网页入口：http://$public_host:18080
   首次使用直接在网页输入发布方提供的 STANDALONE 一次性授权码激活。
@@ -952,7 +952,7 @@ cat <<EOF
 
   日常命令（无需 -f 或 --profile）：
     docker compose ps
-    docker compose logs --tail=100 yiyi-app     # 参数是 compose 服务名
+    docker compose logs --tail=100 yiyi-media     # 参数是 compose 服务名
 
   备份、回滚与运维见 README.md 与 OPERATIONS.md。
 EOF

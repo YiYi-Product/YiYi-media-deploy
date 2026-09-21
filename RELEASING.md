@@ -93,13 +93,13 @@ cd /opt/YiYi-media-deploy
 
 # 解析后的服务列表必须严格是三个
 docker compose config --services | sort
-# 期望：postgres / redis / yiyi-app
+# 期望：postgres / redis / yiyi-media
 
 # 实际运行中的镜像与标签
 docker compose images
 
 # 部署形态与许可证 Edition 是否匹配（管理员可读）
-docker compose exec -T yiyi-app \
+docker compose exec -T yiyi-media \
   curl -fsS http://127.0.0.1:18085/api/config/deployment/capabilities
 ```
 
