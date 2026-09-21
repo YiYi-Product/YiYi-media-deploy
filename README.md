@@ -98,6 +98,7 @@ YIYI_SERVER_HOST=<服务器IP或域名>
 | `YIYI_DB_PASSWORD` | 保持 `GENERATE_ON_INSTALL` 由脚本自动生成；已有数据库时必须填原值 |
 | `YIYI_REDIS_PASSWORD` | **留空表示不启用 Redis 密码**；填 `GENERATE_ON_INSTALL` 才自动生成 |
 | `YIYI_SERVICE_TOKEN` | 保持 `GENERATE_ON_INSTALL` 自动生成；已有部署必须填原值 |
+| `YIYI_NODE_TOKEN` | 保持 `GENERATE_ON_INSTALL`；脚本自动生成并持久化，用于节点平面鉴权 |
 | `YIYI_IMAGE_TAG` | 留空用 `latest`；生产环境建议锁定到不可变版本标签 |
 | `YIYI_DATA_DIR` | 留空用部署目录下的 `data/`；可填绝对或相对路径 |
 | `YIYI_STORAGE_MOUNT_DIR` | 可选。**挂载文件夹**（Storage 挂载数据根）改放别的盘时填，如 `/mnt/big/yiyi-mounts`；留空 = `<YIYI_DATA_DIR>/storage/mount-data` |
@@ -320,7 +321,7 @@ scp -p /opt/YiYi-media-deploy/join.env \
 ```
 
 ::: danger join.env 等同于一份完整的集群凭据
-它含数据库口令、服务令牌与集群同步令牌。用加密通道传输，**不要**贴到聊天工具、
+它含数据库口令、服务令牌、节点令牌与集群同步令牌。用加密通道传输，**不要**贴到聊天工具、
 不要提交到 Git。安装完成后应从其他机器删除。
 :::
 
@@ -436,8 +437,9 @@ YIYI_IMAGE_TAG=2026.09.20-101530
 - 不要公开或提交 `.env`、`join.env`、`config/cluster-relay.key`、`backups/`、`data/`。
 - **许可证公钥（信任根）已固化在服务镜像内**：安装脚本取回的公钥必须与镜像内置的
   厂商公钥一致，否则安装**直接失败**（有意设计，避免产出「安装成功但全站 403」的部署）。
-- `YIYI_SERVICE_TOKEN` 在已有部署上**不可重新生成**：切换会导致现有节点鉴权失败。
+- `YIYI_SERVICE_TOKEN` 在已有部署上**不可重新生成**：切换会导致控制面服务间鉴权失效。
   恢复旧数据库时安装脚本会强制要求填写原值。
+- `YIYI_NODE_TOKEN` 与服务令牌独立；安装脚本会自动生成并复用已有值，不要手工删除或改回服务令牌。
 - 单机版的部署形态与许可证 Edition 严格匹配；能力边界始终以签名租约为准，
   改 `.env` 不会扩大授权范围。
 - 生产环境应为网页入口配置 HTTPS。

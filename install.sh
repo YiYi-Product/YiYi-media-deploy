@@ -417,18 +417,19 @@ if [[ "$postgres_data_existing" == true ]]; then
     echo "检测到已有 PostgreSQL 数据，请在 .env 中填写该数据库原有的 YIYI_DB_PASSWORD" >&2
     exit 1
   fi
-  # 服务令牌不保存在 data 目录里；恢复旧数据库时静默生成新值会让现有
-  # Storage / Play 节点鉴权失败。
+  # 服务令牌不保存在 data 目录里；恢复旧数据库时静默生成新值会让
+  # 控制面服务间鉴权失效。
   service_token="$(env_value .env YIYI_SERVICE_TOKEN)"
   if [[ -z "$service_token" || "$service_token" == "GENERATE_ON_INSTALL" ]]; then
     echo "检测到已有 PostgreSQL 数据，请在 .env 中填写原部署的 YIYI_SERVICE_TOKEN" >&2
-    echo "该 token 不保存在 data 目录；静默生成新值会导致现有 Storage/Play 节点鉴权失败" >&2
+    echo "该 token 不保存在 data 目录；静默生成新值会导致控制面服务间鉴权失效" >&2
     exit 1
   fi
 fi
 generate_secret_if_needed YIYI_DB_PASSWORD
 generate_optional_secret_if_requested YIYI_REDIS_PASSWORD
 generate_secret_if_needed YIYI_SERVICE_TOKEN
+generate_secret_if_needed YIYI_NODE_TOKEN
 
 # ── Compose 调用 ────────────────────────────────────────────────────────────
 # 单机版没有 profile，因此不带 --profile。
@@ -532,7 +533,7 @@ preflight() {
   fi
 
   local key value resolved
-  for key in YIYI_SERVER_HOST YIYI_DB_USER YIYI_DB_PASSWORD YIYI_SERVICE_TOKEN YIYI_LICENSE_SERVER_URL; do
+  for key in YIYI_SERVER_HOST YIYI_DB_USER YIYI_DB_PASSWORD YIYI_SERVICE_TOKEN YIYI_NODE_TOKEN YIYI_LICENSE_SERVER_URL; do
     value="$(env_value .env "$key")"
     [[ -n "$value" && "$value" != REPLACE_* ]] || { echo "缺少 $key" >&2; return 1; }
   done
@@ -587,7 +588,7 @@ EOF
   local required_var
   for required_var in YIYI_DB_USER YIYI_DB_PASSWORD YIYI_REDIS_PASSWORD YIYI_IMAGE_TAG \
                       SPRING_DATASOURCE_URL SPRING_DATASOURCE_USERNAME SPRING_DATASOURCE_PASSWORD \
-                      REDIS_HOST REDIS_PORT YIYI_SERVICE_TOKEN YIYI_LICENSE_SERVER_URL LOG_DIR; do
+                      REDIS_HOST REDIS_PORT YIYI_SERVICE_TOKEN YIYI_NODE_TOKEN YIYI_LICENSE_SERVER_URL LOG_DIR; do
     if ! printf '%s\n' "$resolved" | grep -Eq "^[[:space:]]*${required_var}:"; then
       echo "compose.yaml 未向 yiyi-app 提供 ${required_var}，聚合镜像无法正确启动内部服务" >&2
       return 1

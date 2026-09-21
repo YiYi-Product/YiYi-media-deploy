@@ -103,6 +103,7 @@ services:
 
       # ── 服务间令牌 ───────────────────────────────────────────────────
       YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN:?请设置高熵服务令牌}
+      YIYI_NODE_TOKEN: ${YIYI_NODE_TOKEN:?请设置高熵节点令牌}
 
       # ── 许可证 ───────────────────────────────────────────────────────
       YIYI_LICENSE_SERVER_URL: ${YIYI_LICENSE_SERVER_URL:?请设置授权服务器 HTTPS 地址}
