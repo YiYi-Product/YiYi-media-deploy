@@ -144,6 +144,7 @@ COMPOSE_PROFILES=bundled-postgres,bundled-redis docker compose up -d
 - 旧版通过 profile 选择服务，本分支已移除 profile——`docker compose up -d`
   的行为从「按 profile 起一部分」变为「起全部控制面服务」，这正是同机形态的预期；
 - 容器与 Compose 项目名仍是 `yiyi`，升级时能认出既有容器。
+- 首次运行新版 `install.sh` 会自动生成并持久化 `YIYI_NODE_TOKEN`；之后请在节点管理页对已有 Storage / Play Agent 执行一次升级，以下发新的节点密钥。
 
 ## 安全红线
 
