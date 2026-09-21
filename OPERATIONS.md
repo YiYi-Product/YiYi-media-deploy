@@ -2,7 +2,7 @@
 
 本文覆盖两种部署模式的日常运维。**每节都标明适用模式**：
 
-- **单机版部署**（`STANDALONE`）：`yiyi-app` + `postgres` + `redis` 三个容器
+- **单机版部署**（`STANDALONE`）：`yiyi-media` + `postgres` + `redis` 三个容器
 - **分布式部署**（`DISTRIBUTED`）：控制面按 `control` / `user` / `media` / `edge` 角色拆分
 
 ## 安装与常用命令
@@ -23,7 +23,7 @@ docker compose start
 docker compose restart
 docker compose down
 docker compose up -d
-docker compose logs --tail=100 yiyi-app
+docker compose logs --tail=100 yiyi-media
 ```
 
 ### 分布式部署

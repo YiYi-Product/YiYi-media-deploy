@@ -7,7 +7,7 @@
 # 「节点管理」新增后用页面给出的一键命令部署）。
 #
 # 三种部署形态（各占一个 Git 分支）：
-#   * main（v1-standalone）：yiyi-app + postgres + redis 三容器，节点内置；
+#   * main（v1-standalone）：yiyi-media + postgres + redis 三容器，节点内置；
 #   * v2-all-in-one：控制面 8 个服务全在同一台机器，工作节点在外部；
 #   * v3-multi-host（本分支）：控制面按角色分散到多台机器。
 #
@@ -510,8 +510,8 @@ preflight() {
   # 分布式 Compose 不允许把三容器聚合服务混进来。
   local actual_services
   actual_services="$(compose config --services | tr '\n' ' ')"
-  if printf '%s' "$actual_services" | grep -qw "yiyi-app"; then
-    echo "分布式 Compose 不应包含 yiyi-app（单机版聚合服务）" >&2
+  if printf '%s' "$actual_services" | grep -qw "yiyi-media"; then
+    echo "分布式 Compose 不应包含 yiyi-media（单机版聚合服务）" >&2
     return 1
   fi
 }
