@@ -15,7 +15,7 @@
 #             用页面给出的一键命令部署到其他机器（安装脚本与二进制由 config 分发）。
 #
 # 三种部署形态的区别（各占一个 Git 分支）：
-#   * main（v1-standalone）：yiyi-app + postgres + redis 三容器，节点内置、不能新增；
+#   * main（v1-standalone）：yiyi-media + postgres + redis 三容器，节点内置、不能新增；
 #   * v2-all-in-one（本分支）：控制面全部同机，工作节点在外部；
 #   * v3-multi-host：控制面按 control / user / media / edge 角色分散到多台机器。
 #
