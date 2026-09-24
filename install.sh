@@ -925,11 +925,17 @@ if [[ -n "$legacy_reason" ]]; then
   adopt_legacy_embedded_node_ids
 fi
 
+# 基础设施容器被重建后，Redis / PostgreSQL 的 Compose 私网 IP 可能变化。
+# JVM 内的 Lettuce / JDBC 连接池可能仍在重连旧 IP，表现为连续的
+# `No route to host: redis/<old-ip>:6379`；而普通 `compose up` 在应用镜像与
+# 配置未变时不会重启 yiyi-media，不能保证连接池重新解析服务名。
+# 因此安装/升级每次都只重建聚合应用容器：不再动已就绪的数据容器，
+# 同时让全部内部服务从干净进程中重新解析 postgres / redis。
 if [[ -n "$legacy_reason" ]]; then
   # 迁移路径：保留旧容器，因此不加 --remove-orphans（计划 §13.4）。
-  compose up -d --wait --wait-timeout 900
+  compose up -d --no-deps --force-recreate --wait --wait-timeout 900 yiyi-media
 else
-  compose up -d --remove-orphans --wait --wait-timeout 900
+  compose up -d --no-deps --force-recreate --remove-orphans --wait --wait-timeout 900 yiyi-media
 fi
 
 healthcheck
