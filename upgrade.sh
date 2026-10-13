@@ -279,10 +279,14 @@ rollback() {
   compose stop "${APP_SERVICES[@]}" >/dev/null 2>&1 || true
   local database ok_restore=true
   for database in "${YIYI_DATABASES[@]}"; do
-    # --clean 不会删掉新版本新增的表 / 外键：整库重建后再恢复。
-    if ! db_psql postgres "DROP DATABASE IF EXISTS $database WITH (FORCE);" >/dev/null \
-      || ! db_psql postgres "CREATE DATABASE $database;" >/dev/null \
-      || ! pg_tool pg_restore --exit-on-error -d "$database" < "$backup/$database.dump" >/dev/null 2>&1; then
+    # --clean 不会删掉新版本新增的表 / 外键，所以整库重建：先恢复到旁边的新库，成功后才换掉原库，
+    # 任何一步失败原库都还在。新库用 template0：宿主 glibc 升级后 template1 常带
+    # "collation version mismatch"，PostgreSQL 16 会直接拒绝以它为模板建库（生产 HK1 实测）。
+    if ! db_psql postgres "DROP DATABASE IF EXISTS ${database}_rollback WITH (FORCE);" >/dev/null \
+      || ! db_psql postgres "CREATE DATABASE ${database}_rollback TEMPLATE template0;" >/dev/null \
+      || ! pg_tool pg_restore --exit-on-error -d "${database}_rollback" < "$backup/$database.dump" >/dev/null 2>&1 \
+      || ! db_psql postgres "DROP DATABASE $database WITH (FORCE);" >/dev/null \
+      || ! db_psql postgres "ALTER DATABASE ${database}_rollback RENAME TO $database;" >/dev/null; then
       ok_restore=false; break
     fi
   done
