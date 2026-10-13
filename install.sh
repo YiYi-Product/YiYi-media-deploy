@@ -506,7 +506,7 @@ preflight() {
     return 1
   fi
   local key value cluster_token
-  for key in YIYI_SERVER_HOST YIYI_ADVERTISE_HOST YIYI_DB_HOST YIYI_DB_PORT YIYI_DB_USER YIYI_DB_PASSWORD YIYI_SERVICE_TOKEN YIYI_NODE_TOKEN YIYI_LICENSE_CLUSTER_TOKEN; do
+  for key in YIYI_SERVER_HOST YIYI_ADVERTISE_HOST YIYI_DB_HOST YIYI_DB_PORT YIYI_DB_USER YIYI_DB_PASSWORD YIYI_SERVICE_TOKEN YIYI_NODE_TOKEN YIYI_LICENSE_CLUSTER_TOKEN YIYI_CREDENTIAL_MASTER_KEY; do
     value="$(env_value .env "$key")"
     [[ -n "$value" && "$value" != REPLACE_* ]] || { echo "缺少 $key" >&2; return 1; }
   done

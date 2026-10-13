@@ -213,7 +213,9 @@ services:
       YIYI_NODE_TOKEN: ${YIYI_NODE_TOKEN}
       # 云盘账号凭据加密主密钥（Base64 32 字节）。由 install.sh 生成并持久化，**不得更换**：
       # 换了就再也解不开已保存的网盘凭据。
-      YIYI_CREDENTIAL_MASTER_KEY: ${YIYI_CREDENTIAL_MASTER_KEY:?请设置云盘凭据主密钥}
+      # 这里不写成必填：生成前要先查库（docker compose exec postgres），必填会让升级前的
+      # 每条 compose 命令都因缺变量而失败。是否已配置由 install.sh 的 preflight 把关。
+      YIYI_CREDENTIAL_MASTER_KEY: ${YIYI_CREDENTIAL_MASTER_KEY:-}
       LOG_DIR: /data/logs
     volumes:
       - type: bind
