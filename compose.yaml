@@ -211,6 +211,9 @@ services:
       MEDIA_REGISTRY_IP: ${YIYI_ADVERTISE_HOST}
       YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN}
       YIYI_NODE_TOKEN: ${YIYI_NODE_TOKEN}
+      # 云盘账号凭据加密主密钥（Base64 32 字节）。由 install.sh 生成并持久化，**不得更换**：
+      # 换了就再也解不开已保存的网盘凭据。
+      YIYI_CREDENTIAL_MASTER_KEY: ${YIYI_CREDENTIAL_MASTER_KEY:?请设置云盘凭据主密钥}
       LOG_DIR: /data/logs
     volumes:
       - type: bind

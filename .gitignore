@@ -23,3 +23,6 @@ migration-report-*.md
 migration-report-*.json
 
 *.log
+
+# upgrade.sh 运行期文件
+/.upgrade.lock

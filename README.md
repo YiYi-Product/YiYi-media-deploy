@@ -43,7 +43,8 @@ Edition 写在**签名租约**里，由服务端强制，改环境变量无法�
 | 文件 | 用途 |
 | --- | --- |
 | `compose.yaml` | 控制面 8 个服务的编排（**无 profile**，直接 up 即可） |
-| `install.sh` | 安装 / 升级脚本（固定控制面同机，不需要角色选择） |
+| `install.sh` | 安装脚本（固定控制面同机，不需要角色选择；幂等） |
+| `upgrade.sh` | 一键升级：备份、账号迁移、重建控制面、升级本机节点、失败自动回滚 |
 | `.env.example` | 环境变量模板 |
 | `postgres-init.sql` | 首次启动时建库建角色 |
 | `OPERATIONS.md` | 日常运维（备份、升级、排障） |
@@ -61,20 +62,19 @@ sudo ./install.sh
 
 装完后直接访问 `http://<YIYI_PUBLIC_HOST>:18080`，首次使用在网页上完成许可证激活。
 
-后续升级：
+后续升级（**一条命令**）：
 
 ```bash
-git pull --ff-only
-sudo ./install.sh          # 幂等，会按需重建容器
+sudo ./upgrade.sh --check --tag <版本>   # 只读预检，不做任何改动
+sudo ./upgrade.sh --tag <版本>           # 备份 → 更新部署文件 → 迁移数据 → 重建控制面 → 升级本机节点 → 验证
 ```
 
-也可以用原生 Compose 命令（`.env` 已就绪时 `docker compose` 会自动读取）：
+`upgrade.sh` 会先用 `pg_dump` 备份四个业务库（默认放在 `./backups/`，`--backup-dir` 可改），
+失败时自动恢复备份并拉起旧版本。其它主机上的工作节点会在结束时列出，请到网页「节点管理」
+逐个点「一键远程升级」。
 
-```bash
-docker compose pull
-docker compose up -d
-docker compose ps
-```
+> 不要再用 `docker compose pull && docker compose up -d` 直接升级：自 2026-10 版本起，
+> 旧版网盘账号需要在新版 Storage 启动前离线迁移，跳过这一步会丢失网盘账号配置。
 
 ### 只跑部分服务？本分支不支持
 

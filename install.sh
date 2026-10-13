@@ -666,9 +666,66 @@ healthcheck() {
   esac
 }
 
+# 云盘账号凭据加密主密钥（media 用 AES-GCM 加密已保存的网盘凭据）。
+#
+# 与其它令牌不同，它**不能**随便重新生成：换了就再也解不开库里已有的凭据。
+# 因此只在「库里还没有任何加密凭据」时才生成；已有凭据而 .env 丢了原密钥时安全中止。
+# 它是 Base64 编码的 32 字节，不是 hex，所以不走 generate_secret_if_needed。
+credential_tables_have_rows() {
+  local table present count
+  for table in t_cloud_account_asset_credential t_user_cloud_credential; do
+    present="$(db_psql yiyi_media "SELECT to_regclass('public.$table') IS NOT NULL;")" || return 2
+    [[ "$present" == t ]] || continue
+    count="$(db_psql yiyi_media "SELECT count(*) FROM $table;")" || return 2
+    [[ "$count" == 0 ]] || return 0
+  done
+  return 1
+}
+
+db_psql() {
+  local database="$1" statement="$2" host port user
+  if [[ "$db_mode" == "bundled" ]]; then
+    compose exec -T postgres psql -X -qAt -v ON_ERROR_STOP=1 -U "$(env_value .env YIYI_DB_USER)" \
+      -d "$database" -c "$statement"
+  else
+    host="$(env_value .env YIYI_DB_HOST)"; port="$(env_value .env YIYI_DB_PORT)"; user="$(env_value .env YIYI_DB_USER)"
+    PGPASSWORD="$(env_value .env YIYI_DB_PASSWORD)" docker run --rm -i --network host -e PGPASSWORD postgres:16.4 \
+      psql -X -qAt -v ON_ERROR_STOP=1 -h "$host" -p "${port:-5432}" -U "$user" -d "$database" -c "$statement"
+  fi
+}
+
+ensure_credential_master_key() {
+  local value rc
+  value="$(env_value .env YIYI_CREDENTIAL_MASTER_KEY)"
+  if [[ -z "$value" || "$value" == "GENERATE_ON_INSTALL" ]]; then
+    if [[ "$installed" == true || "$postgres_data_existing" == true || "$db_mode" == "external" ]]; then
+      if [[ "$db_mode" == "bundled" ]]; then
+        compose up -d --wait --wait-timeout 120 postgres >/dev/null
+      fi
+      rc=0; credential_tables_have_rows || rc=$?
+      if [[ $rc == 0 ]]; then
+        echo "数据库里已有加密的网盘凭据，但 .env 缺少原 YIYI_CREDENTIAL_MASTER_KEY，已中止。" >&2
+        echo "请从旧部署找回该密钥填回 .env；生成新密钥会让已保存的凭据全部无法解密。" >&2
+        return 1
+      elif [[ $rc != 1 ]]; then
+        echo "无法检查已有网盘凭据（数据库不可达？），已中止以免误生成主密钥。" >&2
+        return 1
+      fi
+    fi
+    value="$(openssl rand -base64 32)"
+    set_env_value .env YIYI_CREDENTIAL_MASTER_KEY "$value"
+    echo "已生成云盘凭据主密钥 YIYI_CREDENTIAL_MASTER_KEY（已写入 .env，请随 .env 一起备份）。"
+  fi
+  if ! printf '%s' "$value" | python3 -c 'import base64,sys; assert len(base64.b64decode(sys.stdin.read().strip(), validate=True)) == 32' 2>/dev/null; then
+    echo "YIYI_CREDENTIAL_MASTER_KEY 必须是 Base64 编码的 32 字节（openssl rand -base64 32）。" >&2
+    return 1
+  fi
+}
+
 if [[ "$installed" == true ]]; then
   echo "正在升级 $role"
 fi
+ensure_credential_master_key
 sync_license_public_key
 preflight
 
