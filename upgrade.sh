@@ -147,10 +147,12 @@ fi
 image_tag="${tag:-$(env_value .env YIYI_IMAGE_TAG)}"; image_tag="${image_tag:-latest}"
 [[ "$image_tag" == latest ]] && warn "YIYI_IMAGE_TAG 未锁定，跟随 latest；建议 --tag <版本> 锁定以便回滚"
 
+# 旧库常带 "collation version mismatch" 告警（宿主 glibc 变化所致，与升级无关），只滤掉这几行。
+quiet_collation() { grep -vE 'collation version|^DETAIL:  The database was created|^HINT:  Rebuild all objects' >&2 || true; }
 db_psql() {
   local database="$1" statement="$2" host port
   if [[ "$db_mode" == bundled ]]; then
-    compose exec -T postgres psql -X -qAt -v ON_ERROR_STOP=1 -U "$db_user" -d "$database" -c "$statement"
+    compose exec -T postgres psql -X -qAt -v ON_ERROR_STOP=1 -U "$db_user" -d "$database" -c "$statement" 2> >(quiet_collation)
   else
     host="$(env_value .env YIYI_DB_HOST)"; port="$(env_value .env YIYI_DB_PORT)"
     PGPASSWORD="$(env_value .env YIYI_DB_PASSWORD)" docker run --rm -i --network host -e PGPASSWORD postgres:16.4 \
