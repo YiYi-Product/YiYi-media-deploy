@@ -45,6 +45,7 @@ Edition 写在**签名租约**里，由服务端强制，改环境变量无法�
 | `compose.yaml` | 控制面 8 个服务的编排（**无 profile**，直接 up 即可） |
 | `install.sh` | 安装脚本（固定控制面同机，不需要角色选择；幂等） |
 | `upgrade.sh` | 一键升级：备份、账号迁移、重建控制面、升级本机节点、失败自动回滚 |
+| `UPGRADE.md` | **升级指南**（已部署环境升级前必读） |
 | `.env.example` | 环境变量模板 |
 | `postgres-init.sql` | 首次启动时建库建角色 |
 | `OPERATIONS.md` | 日常运维（备份、升级、排障） |
@@ -62,7 +63,7 @@ sudo ./install.sh
 
 装完后直接访问 `http://<YIYI_PUBLIC_HOST>:18080`，首次使用在网页上完成许可证激活。
 
-后续升级（**一条命令**）：
+后续升级（**一条命令**，完整步骤与注意事项见 [UPGRADE.md](UPGRADE.md)）：
 
 ```bash
 sudo ./upgrade.sh --check --tag <版本>   # 只读预检，不做任何改动

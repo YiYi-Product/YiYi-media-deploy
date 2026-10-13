@@ -135,8 +135,9 @@ fi
 # 文档化的升级流程本来就要求先手动 `git pull --ff-only` 再执行本脚本
 # （见 README「升级」与 OPERATIONS），因此自动拉取只是多余的高风险行为。
 # 现改为显式提示，由操作者自行决定何时更新代码。
-if [[ "$installed" == true && -d .git ]]; then
-  if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+# upgrade.sh 已经做过工作区检查并更新了部署文件，由它调用时不再重复提示。
+if [[ "$installed" == true && -d .git && "${YIYI_CALLED_BY_UPGRADE:-0}" != 1 ]]; then
+  if [[ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
     echo "提示：部署目录存在未提交的本地改动，升级前请自行确认。" >&2
   fi
   echo "提示：如需升级部署文件，请先手动执行 git pull --ff-only 再运行本脚本。" >&2
@@ -747,7 +748,11 @@ if [[ "$role" == "control" ]]; then
   export_join
   echo "已生成 join.env 和 cluster-relay.crt，请通过安全方式复制到其他节点。"
 elif [[ "$role" == "single" || "$role" == "edge" ]]; then
-  echo "完成，请访问 http://$public_host:18080；首次使用直接在网页激活。"
+  if [[ "${YIYI_CALLED_BY_UPGRADE:-0}" == 1 ]]; then
+    echo "完成。"
+  else
+    echo "完成，请访问 http://$public_host:18080；首次使用直接在网页激活。"
+  fi
 else
   echo "$role 完成。"
 fi

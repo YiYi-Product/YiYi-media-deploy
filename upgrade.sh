@@ -368,7 +368,7 @@ fi
 # ── 6. 重建控制面 ──────────────────────────────────────────────────────────
 step "6/8 重建控制面（install.sh）"
 rollback_armed=true
-./install.sh 2>&1 | tee "$backup/install.log"
+YIYI_CALLED_BY_UPGRADE=1 ./install.sh 2>&1 | tee "$backup/install.log"
 [[ "${PIPESTATUS[0]}" == 0 ]] || die "install.sh 失败，日志：$backup/install.log"
 rollback_armed=false   # 控制面已用新版本跑起来，后面的节点升级失败不回滚数据库
 ok "控制面已是新版本"
