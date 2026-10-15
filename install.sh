@@ -41,11 +41,13 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
-for tool in docker openssl curl python3; do
+for tool in docker openssl curl python3 flock; do
   command -v "$tool" >/dev/null 2>&1 || { echo "未安装 $tool" >&2; exit 1; }
 done
 docker compose version >/dev/null 2>&1 || { echo "需要 Docker Compose v2（docker compose 子命令）" >&2; exit 1; }
 docker info >/dev/null 2>&1 || { echo "Docker daemon 不可用" >&2; exit 1; }
+exec 9>"$DEPLOY_DIR/.install.lock"
+flock -n 9 || { echo '另一个安装或升级正在运行。' >&2; exit 1; }
 install -d -m 0700 "$DEPLOY_DIR/config"
 
 env_value() {
@@ -906,6 +908,7 @@ fi
 sync_license_public_key
 preflight
 
+
 # 拉取镜像。离线/内网（air-gapped）环境可设置 YIYI_SKIP_PULL=1 使用本机已有镜像；
 # 此时镜像必须已经导入本机，脚本会在启动后由健康检查验证实际可用性。
 if [[ "${YIYI_SKIP_PULL:-0}" == "1" ]]; then
@@ -919,11 +922,20 @@ fi
 compose up -d postgres redis --wait --wait-timeout 300
 ensure_databases
 
+
 # 迁移场景：沿用原有节点 ID，避免媒体源引用与线路授权失联。
 if [[ -n "$legacy_reason" ]]; then
   echo "正在检查是否需要沿用原有节点 ID"
   adopt_legacy_embedded_node_ids
 fi
+
+# 自动离线迁移；用户仍只执行 install.sh。必须先于新版应用内部 Flyway。
+source "$DEPLOY_DIR/scripts/migrate-cloud-accounts.sh"
+trap account_upgrade_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+account_upgrade_ensure_key
+account_upgrade_prepare
 
 # 基础设施容器被重建后，Redis / PostgreSQL 的 Compose 私网 IP 可能变化。
 # JVM 内的 Lettuce / JDBC 连接池可能仍在重连旧 IP，表现为连续的
@@ -933,12 +945,22 @@ fi
 # 同时让全部内部服务从干净进程中重新解析 postgres / redis。
 if [[ -n "$legacy_reason" ]]; then
   # 迁移路径：保留旧容器，因此不加 --remove-orphans（计划 §13.4）。
-  compose up -d --no-deps --force-recreate --wait --wait-timeout 900 yiyi-media
+  if ! compose up -d --no-deps --force-recreate --wait --wait-timeout 900 yiyi-media; then
+    account_upgrade_rollback
+    exit 1
+  fi
 else
-  compose up -d --no-deps --force-recreate --remove-orphans --wait --wait-timeout 900 yiyi-media
+  if ! compose up -d --no-deps --force-recreate --remove-orphans --wait --wait-timeout 900 yiyi-media; then
+    account_upgrade_rollback
+    exit 1
+  fi
 fi
 
-healthcheck
+if ! healthcheck; then
+  account_upgrade_rollback
+  exit 1
+fi
+account_upgrade_commit
 
 touch .installed
 chmod 0600 .installed

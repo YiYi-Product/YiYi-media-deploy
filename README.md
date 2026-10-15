@@ -2,8 +2,7 @@
 
 本仓库用于部署 YiYi Media。产品有**两种部署模式**，模式决定能力边界（由签名租约里的
 `edition` 强制）；每种模式下的**部署方式**决定装在几台机器上。三种部署方式各占一个
-**Git 分支**，每个分支根目录都是一套完整部署文件，可直接
-`docker compose pull && docker compose up -d`：
+**Git 分支**，每个分支根目录都是一套完整部署文件，按对应分支的安装脚本部署和升级：
 
 | 部署方式 | 分支 | 部署模式 | 拓扑 | 对应许可证 |
 | --- | --- | --- | --- | --- |
@@ -44,7 +43,7 @@
 
 ## 仓库文件一览
 
-本分支（`main`）只有单机版一套文件，根目录可直接 `docker compose pull && docker compose up -d`：
+本分支（`main`）只有单机版一套文件，安装和升级使用根目录的 `install.sh`：
 
 | 文件 | 说明 |
 | --- | --- |
@@ -70,14 +69,13 @@
 Error response from daemon: Conflict. The container name "/YiYi-media" is already in use
 ```
 
-两种正确做法，任选其一：
+使用安装脚本处理旧容器和账号迁移：
 
 ```bash
-sudo ./install.sh                 # 推荐：脚本内部用 --remove-orphans 清理旧容器
-docker compose up -d --remove-orphans   # 手工升级时必须显式加这个参数
+sudo ./install.sh
 ```
 
-`docker compose down` 也可先清掉旧容器再起。数据都在 `data/` 绑定挂载里，改名不影响数据。
+不要用手工重建绕过账号迁移。数据都在 `data/` 绑定挂载里，改名不影响数据。
 :::
 
 > 分布式方式（`v2-all-in-one` / `v3-multi-host`）的文件在各自分支的根目录，
@@ -87,7 +85,7 @@ docker compose up -d --remove-orphans   # 手工升级时必须显式加这个�
 
 - Linux 服务器（单机版与控制面同机都是 1 台；按角色多机至少 4 台，且在同一私有网络）
 - Docker Engine 与 Docker Compose v2（`docker compose` 子命令可用）
-- `openssl`、`curl`、`python3`（安装脚本启动即检查，缺一个直接退出）
+- `openssl`、`curl`、`python3`、`flock`（通常由 util-linux 提供；安装脚本启动即检查）
 - 服务器 IP 或已解析的域名（不带 `http://` 前缀与路径）
 - 一个与部署模式匹配的一次性授权码
 - 出站网络：能访问 `YIYI_LICENSE_SERVER_URL` 指向的授权中心（HTTPS）
@@ -118,6 +116,7 @@ YIYI_SERVER_HOST=<服务器IP或域名>
 | `YIYI_REDIS_PASSWORD` | **留空表示不启用 Redis 密码**；填 `GENERATE_ON_INSTALL` 才自动生成 |
 | `YIYI_SERVICE_TOKEN` | 保持 `GENERATE_ON_INSTALL` 自动生成；已有部署必须填原值 |
 | `YIYI_NODE_TOKEN` | 保持 `GENERATE_ON_INSTALL`；脚本自动生成并持久化，用于节点平面鉴权 |
+| `YIYI_CREDENTIAL_MASTER_KEY` | 首次自动生成；升级保留原值，不得更换，随 `.env` 备份 |
 | `YIYI_IMAGE_TAG` | 留空用 `latest`；生产环境建议锁定到不可变版本标签 |
 | `YIYI_DATA_DIR` | 留空用部署目录下的 `data/`；可填绝对或相对路径 |
 | `YIYI_STORAGE_MOUNT_DIR` | 可选。**挂载文件夹**（Storage 挂载数据根）改放别的盘时填，如 `/mnt/big/yiyi-mounts`；留空 = `<YIYI_DATA_DIR>/storage/mount-data` |
@@ -375,8 +374,9 @@ sudo ./install.sh
 
 ## 升级
 
-::: danger 安装脚本不会自动生成升级备份
-升级前请按 [`OPERATIONS.md`](OPERATIONS.md)「备份」自行完成备份，保留周期自行管理。
+::: warning 保留日常备份
+账号模型升级会自动生成专用数据库备份，但不替代日常备份。日常备份与保留周期仍按
+[`OPERATIONS.md`](OPERATIONS.md) 管理。
 :::
 
 ### 单机版：整镜像升级
@@ -384,12 +384,13 @@ sudo ./install.sh
 ```bash
 cd /opt/YiYi-media-deploy
 git pull --ff-only              # 部署文件有更新时才需要
-docker compose pull
-docker compose up -d --remove-orphans --wait
+sudo ./install.sh
 docker compose ps
 ```
 
 应用容器里的八个服务**同版本、同镜像、一起替换**，内置节点不需要单独升级。
+已有网盘与媒体库来源由脚本自动迁移，无需额外操作；请勿直接启动新版绕过迁移。
+备份、恢复和适用边界见 [账号自动升级](CLOUD_ACCOUNT_UPGRADE.md)。
 
 ### 分布式：按机器、按服务升级
 

@@ -23,3 +23,5 @@ migration-report-*.md
 migration-report-*.json
 
 *.log
+/.install.lock
+/.account-upgrade-backup

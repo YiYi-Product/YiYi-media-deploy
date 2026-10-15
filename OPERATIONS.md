@@ -110,17 +110,16 @@ data/
 
 ### 通用前提
 
-升级前由用户自行完成数据备份，然后执行：
+日常备份由用户管理。单机版使用安装脚本升级（账号模型迁移会自动备份）：
 
 ```bash
 cd /opt/YiYi-media-deploy
-docker compose pull
-docker compose up -d --remove-orphans --wait
+sudo ./install.sh
 docker compose ps
 ```
 
-`docker compose pull` 只下载镜像，**不会更新正在运行的容器**。需要更新部署文件时，
-先执行 `git pull --ff-only`。
+需要更新部署文件时先执行 `git pull --ff-only`。账号模型升级不得绕过安装脚本；
+自动备份位于数据目录的 `account-upgrade.*`，保留用于恢复，详见 [账号自动升级](CLOUD_ACCOUNT_UPGRADE.md)。
 
 ### 单机版：整镜像升级
 
