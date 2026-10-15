@@ -66,9 +66,11 @@ sudo ./install.sh
 后续升级（**一条命令**，完整步骤与注意事项见 [UPGRADE.md](UPGRADE.md)）：
 
 ```bash
-sudo ./upgrade.sh --check --tag <版本>   # 只读预检，不做任何改动
-sudo ./upgrade.sh --tag <版本>           # 备份 → 更新部署文件 → 迁移数据 → 重建控制面 → 升级本机节点 → 验证
+sudo ./upgrade.sh --check   # 只读预检，不做任何改动
+sudo ./upgrade.sh           # 备份 → 更新部署文件 → 迁移数据 → 重建控制面 → 升级本机节点 → 验证
 ```
+
+`upgrade.sh` 默认拉取 `latest`，即使 `.env` 仍记录旧版本号；需要指定版本时使用 `--tag <标签>`。
 
 `upgrade.sh` 会先用 `pg_dump` 备份四个业务库（默认放在 `./backups/`，`--backup-dir` 可改），
 失败时自动恢复备份并拉起旧版本。其它主机上的工作节点会在结束时列出，请到网页「节点管理」

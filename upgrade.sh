@@ -33,7 +33,7 @@ usage() {
   cat <<'EOF'
 用法：./upgrade.sh [选项]
 
-  --tag <标签>           升级到指定镜像标签（写入 .env 的 YIYI_IMAGE_TAG）；不填则沿用 .env 现值
+  --tag <标签>           升级到指定镜像标签（写入 .env 的 YIYI_IMAGE_TAG）；不填则使用 latest，不沿用 .env 的旧标签
   --backup-dir <目录>    备份根目录，默认 <部署目录>/backups
   --check                只读预检：报告待更新提交、节点分布、是否需要账号迁移，不做任何改动
   --skip-git-pull        不更新部署文件（离线或已手动更新时）
@@ -44,7 +44,7 @@ usage() {
 EOF
 }
 
-tag="" backup_root="" check_only=false skip_pull=false skip_nodes=false remote_storage_stopped=false assume_yes=false
+tag="latest" backup_root="" check_only=false skip_pull=false skip_nodes=false remote_storage_stopped=false assume_yes=false
 original_args=("$@")
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -80,7 +80,8 @@ set_env_value() {
   mv "$temp" "$file"
 }
 compose() {
-  docker compose --env-file "$DEPLOY_DIR/.env" -f "$DEPLOY_DIR/compose.yaml" "$@"
+  # 拉取目标版本时暂不改 .env，确保备份仍保存升级前的标签。
+  YIYI_IMAGE_TAG="$image_tag" docker compose --env-file "$DEPLOY_DIR/.env" -f "$DEPLOY_DIR/compose.yaml" "$@"
 }
 # 节点令牌、口令会出现在节点脚本输出里：一律打码后再显示 / 落日志。
 redact() {
@@ -140,12 +141,9 @@ else
   step "2/8 更新部署文件（已跳过）"
 fi
 
-if [[ -n "$tag" ]]; then
-  [[ "$tag" =~ ^[0-9A-Za-z._-]+$ ]] || die "镜像标签格式无效：$tag"
-  [[ "$check_only" == true ]] || set_env_value .env YIYI_IMAGE_TAG "$tag"
-fi
-image_tag="${tag:-$(env_value .env YIYI_IMAGE_TAG)}"; image_tag="${image_tag:-latest}"
-[[ "$image_tag" == latest ]] && warn "YIYI_IMAGE_TAG 未锁定，跟随 latest；建议 --tag <版本> 锁定以便回滚"
+[[ "$tag" =~ ^[0-9A-Za-z._-]+$ ]] || die "镜像标签格式无效：$tag"
+image_tag="$tag"
+ok "目标镜像标签：$image_tag"
 
 # 旧库常带 "collation version mismatch" 告警（宿主 glibc 变化所致，与升级无关），只滤掉这几行。
 quiet_collation() { grep -vE 'collation version|^DETAIL:  The database was created|^HINT:  Rebuild all objects' >&2 || true; }
@@ -295,6 +293,7 @@ rollback() {
     return 1
   fi
   cp "$backup/.env.before" .env 2>/dev/null || true
+  image_tag="$(env_value .env YIYI_IMAGE_TAG)"; image_tag="${image_tag:-latest}"
   local override="$backup/rollback.yaml" service
   {
     echo "services:"
@@ -368,6 +367,7 @@ fi
 # ── 6. 重建控制面 ──────────────────────────────────────────────────────────
 step "6/8 重建控制面（install.sh）"
 rollback_armed=true
+set_env_value .env YIYI_IMAGE_TAG "$image_tag"
 YIYI_CALLED_BY_UPGRADE=1 ./install.sh 2>&1 | tee "$backup/install.log"
 [[ "${PIPESTATUS[0]}" == 0 ]] || die "install.sh 失败，日志：$backup/install.log"
 rollback_armed=false   # 控制面已用新版本跑起来，后面的节点升级失败不回滚数据库

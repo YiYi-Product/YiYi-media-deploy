@@ -6,9 +6,9 @@
 
 ---
 
-## 一、本次版本（`2026.10.13-092442`）为什么必须照本文升级
+## 一、为什么必须使用升级脚本
 
-本版本把「网盘账号」从各个 Storage 节点集中到控制面统一管理（账号模型统一）。
+自 2026-10 的账号模型统一版本起，「网盘账号」从各个 Storage 节点集中到控制面统一管理（账号模型统一）。
 新版 Storage 第一次启动时会**删除旧的网盘配置表**，所以旧版本里配好的网盘账号必须
 **先离线迁移**到新的账号表，再启动新版本。`upgrade.sh` 会自动完成这一步。
 
@@ -47,7 +47,7 @@
 ```bash
 cd /opt/YiYi-media-deploy
 git pull --ff-only
-sudo ./upgrade.sh --check --tag 2026.10.13-092442
+sudo ./upgrade.sh --check
 ```
 
 预检会输出：
@@ -66,8 +66,11 @@ sudo ./upgrade.sh --check --tag 2026.10.13-092442
 
 ```bash
 cd /opt/YiYi-media-deploy
-sudo ./upgrade.sh --tag 2026.10.13-092442
+sudo ./upgrade.sh
 ```
+
+默认升级到 `latest`，不会沿用 `.env` 中的旧版本号；升级前会备份原配置，重建控制面时写入新标签。
+如需指定仍存在的版本，可加 `--tag <标签>`。
 
 脚本会让你输入 `y` 确认，然后依次执行：
 
@@ -89,7 +92,7 @@ sudo ./upgrade.sh --tag 2026.10.13-092442
 脚本无法替你停止其它主机上的 Storage 节点，会在第 1 步提示并退出。请这样做：
 
 1. 登录 Storage 所在主机，停止节点：Docker 节点 `docker stop <节点ID>`，二进制节点 `systemctl stop <节点ID>`；
-2. 回到控制面主机，加参数重跑：`sudo ./upgrade.sh --tag 2026.10.13-092442 --remote-storage-stopped`；
+2. 回到控制面主机，加参数重跑：`sudo ./upgrade.sh --remote-storage-stopped`；
 3. 控制面升级完成后，按第五步升级这个 Storage 节点（它会以新版本重新启动）。
 
 > 账号迁移目前只支持**1 个** Storage 节点。有多个 Storage 节点时脚本会拒绝执行，请先联系发布方。
