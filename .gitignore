@@ -25,3 +25,5 @@ migration-report-*.json
 *.log
 /.install.lock
 /.account-upgrade-backup
+__pycache__/
+*.py[cod]
