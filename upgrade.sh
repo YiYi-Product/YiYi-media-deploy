@@ -22,6 +22,8 @@
 #   旧版本里配置的网盘账号必须在此之前由离线迁移搬进 media 的账号资产表。
 #   直接 up 会让**新版 storage 节点**一启动就把这些账号清掉。
 set -euo pipefail
+umask 077
+# Local tested migration repair; official upgrade.sh is not modified.
 
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DEPLOY_DIR"
@@ -115,31 +117,15 @@ backup_root="${backup_root:-$DEPLOY_DIR/backups}"
 ok "分支 $branch，数据库 $db_mode，数据目录 $data_dir"
 
 # ── 2. 更新部署文件 ────────────────────────────────────────────────────────
-if [[ "$check_only" == true ]]; then
-  step "2/8 部署文件（只读）"
-  git fetch --quiet origin "$EXPECTED_BRANCH" || warn "git fetch 失败"
-  pending="$(git log --oneline "HEAD..origin/$EXPECTED_BRANCH" 2>/dev/null || true)"
-  if [[ -n "$pending" ]]; then echo "  待更新提交："; printf '    %s\n' "${pending//$'\n'/$'\n'    }"; else ok "部署文件已是最新"; fi
-  [[ -z "$(git status --porcelain --untracked-files=no)" ]] || warn "部署目录有未提交改动，正式升级会拒绝执行"
-elif [[ "$skip_pull" == false ]]; then
-  step "2/8 更新部署文件"
-  if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
-    git status --short --untracked-files=no >&2
-    die "部署目录有未提交的改动（见上），按约定不覆盖；处理后重试，或用 --skip-git-pull"
-  fi
-  before="$(git rev-parse HEAD)"
-  git fetch --quiet origin "$EXPECTED_BRANCH"
-  git merge --ff-only --quiet "origin/$EXPECTED_BRANCH" || die "无法快进到 origin/$EXPECTED_BRANCH"
-  after="$(git rev-parse HEAD)"
-  if [[ "$before" != "$after" ]]; then
-    ok "部署文件 ${before:0:7} → ${after:0:7}，用新版脚本继续"
-    flock -u 9
-    exec "$DEPLOY_DIR/upgrade.sh" --skip-git-pull "${original_args[@]}"
-  fi
-  ok "部署文件已是最新（${after:0:7}）"
-else
-  step "2/8 更新部署文件（已跳过）"
-fi
+step "2/8 固定已检查的部署版本（不自动更新）"
+[[ "$(git rev-parse --short=7 HEAD)" == 0c1ca86 ]] || die "部署版本已变化，请重新审核修补版"
+[[ -z "$(git status --porcelain --untracked-files=no)" ]] || die "受管部署文件有改动，请先核对"
+[[ "$tag" == latest ]] || die "此修补版只支持已检查的 latest 流程"
+repair_file="$DEPLOY_DIR/yiyi-migrate-fixed-test.py"
+[[ -f "$repair_file" && ! -L "$repair_file" ]] || die "缺少修补后的迁移文件"
+repair_hash="$(sha256sum "$repair_file")"
+[[ "${repair_hash%% *}" == 30df726c722d4c3d1157dde0fc24da7c4659a3507a0f6b53678ab0a6cf5b9423 ]] || die "迁移补丁校验失败；不要继续"
+ok "补丁 SHA256 校验通过；迁移镜像固定为测试摘要"
 
 [[ "$tag" =~ ^[0-9A-Za-z._-]+$ ]] || die "镜像标签格式无效：$tag"
 image_tag="$tag"
@@ -207,8 +193,10 @@ if [[ "$need_account_upgrade" == true ]]; then
   if (( ${#remote_storage[@]} > 0 )) && [[ "$remote_storage_stopped" != true && "$check_only" != true ]]; then
     die "Storage 节点 ${remote_storage[*]} 在远程主机上：请先在那台机器停掉它（docker stop / systemctl stop），再加 --remote-storage-stopped 重跑"
   fi
-  migrate_image="ghcr.io/yiyi-product/yiyi-media-standalone:$image_tag"
+  migrate_image="ghcr.io/yiyi-product/yiyi-media-standalone@sha256:a83521ce41612befdc76dac7351974da4a3b5e724ea9684f4b0ecb7d846b7500"
 fi
+
+[[ "$need_account_upgrade" == true ]] || die "已无待迁移旧数据；此专项修补版不适用"
 
 if [[ "$check_only" == true ]]; then
   for entry in "${managed_nodes[@]}"; do
@@ -243,6 +231,9 @@ done
 compose pull license-agent "${APP_SERVICES[@]}"
 if [[ "$need_account_upgrade" == true ]]; then
   docker pull "$migrate_image"
+  # Do not combine an old tested migrator with a newly moved standalone latest.
+  docker pull ghcr.io/yiyi-product/yiyi-media-standalone:latest
+  [[ "$(docker image inspect --format '{{.Id}}' ghcr.io/yiyi-product/yiyi-media-standalone:latest)" == "$(docker image inspect --format '{{.Id}}' "$migrate_image")" ]] || die "latest 迁移镜像已变化；停止并重新测试，尚未停服迁移"
   docker run --rm --entrypoint /usr/bin/test "$migrate_image" -f /opt/yiyi/migrate_cloud_accounts.py \
     || die "$migrate_image 不含账号迁移工具，请确认镜像标签"
 fi
@@ -316,6 +307,9 @@ rollback() {
 }
 trap 'rc=$?; if (( rc != 0 )); then rollback || true; fi; exit $rc' EXIT
 cp .env "$backup/.env.before"; chmod 0600 "$backup/.env.before"
+cp "$repair_file" "$backup/migrate-fixed.py"
+[[ "$(sha256sum "$backup/migrate-fixed.py" | cut -d ' ' -f1)" == 30df726c722d4c3d1157dde0fc24da7c4659a3507a0f6b53678ab0a6cf5b9423 ]] || die "备份中的迁移补丁校验失败"
+printf '%s\n' "$migrate_image" > "$backup/migration-image"
 
 # ── 5. 账号离线迁移 ────────────────────────────────────────────────────────
 if [[ "$need_account_upgrade" == true ]]; then
@@ -355,8 +349,10 @@ if [[ "$need_account_upgrade" == true ]]; then
     echo "YIYI_EMBEDDED_STORAGE_NODE_ID=${storage_nodes[0]}"
   } > "$envfile"
   rc=0
-  docker run --rm --network host --env-file "$envfile" --entrypoint python3 \
-    "$migrate_image" /opt/yiyi/migrate_cloud_accounts.py || rc=$?
+  docker run --rm --pull=never --network host --env-file "$envfile" \
+    --mount "type=bind,src=$backup/migrate-fixed.py,dst=/opt/yiyi/migrate_cloud_accounts.py,readonly" \
+    --entrypoint python3 "$migrate_image" /opt/yiyi/migrate_cloud_accounts.py \
+    2>&1 | tee "$backup/migration.log" || rc=$?
   rm -f "$envfile"
   (( rc == 0 )) || die "账号迁移失败（输出已按设计脱敏）"
   ok "账号迁移完成"
