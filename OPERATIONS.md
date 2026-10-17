@@ -125,6 +125,17 @@ sudo ./install.sh      # 分布式
 改 `.env`、Compose 文件或角色变量都不会改变部署模式；三种形态各占一个 Git 分支。
 :::
 
+## 数据库参数自动调整
+
+自带的 PostgreSQL 每次启动都由 `postgres-autotune.sh` 按容器可用的内存与 CPU 计算
+`shared_buffers`、`work_mem`、`effective_cache_size`、并行度等参数，启动日志里以
+`[yiyi-pg-autotune]` 开头记录本次取值。机器扩容或迁移后重启 `postgres` 容器即可，不需要手工改配置。
+
+- 未给容器设内存上限时视为与其它服务共用宿主机，`shared_buffers` 只取内存的 15%（上限 8GB）；
+  设了上限则按 25% 计算。
+- 自动参数通过命令行传入，优先级高于 `postgresql.conf` 与 `ALTER SYSTEM`。需要手工管理时在
+  `.env` 写 `YIYI_PG_AUTOTUNE=false` 后重建 `postgres` 容器，恢复官方镜像默认行为。
+
 ## 备份
 
 ::: danger 不要直接复制运行中的数据库目录
