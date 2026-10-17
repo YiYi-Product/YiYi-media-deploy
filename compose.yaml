@@ -37,14 +37,22 @@ services:
     profiles: ["bundled-postgres"]
     image: postgres:16.4
     restart: unless-stopped
+    # 每次启动按容器可用内存 / CPU 自动计算 shared_buffers、work_mem 等参数，
+    # 机器扩容或迁移后重启即生效；YIYI_PG_AUTOTUNE=false 时退回官方镜像默认行为。
+    entrypoint: ["bash", "/yiyi/postgres-autotune.sh"]
+    command: ["postgres"]
+    # 并行查询的共享内存走 /dev/shm；Docker 默认 64MB，调大 work_mem 后不够用。这只是上限，不预占内存。
+    shm_size: "1gb"
     environment:
       POSTGRES_USER: ${YIYI_DB_USER:?请设置 YIYI_DB_USER}
       POSTGRES_PASSWORD: ${YIYI_DB_PASSWORD:?请设置 YIYI_DB_PASSWORD}
+      YIYI_PG_AUTOTUNE: ${YIYI_PG_AUTOTUNE:-true}
     volumes:
       - type: bind
         source: ${YIYI_DATA_DIR:-./data}/postgres
         target: /var/lib/postgresql/data
       - ./postgres-init.sql:/docker-entrypoint-initdb.d/00-init-yiyi.sql:ro
+      - ./postgres-autotune.sh:/yiyi/postgres-autotune.sh:ro
     ports:
       # 绑到 YIYI_INFRA_BIND_HOST（本机内网地址）。仅在本机自带数据库时存在；
       # 用外部数据库时该服务不会被启动。
