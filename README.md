@@ -116,7 +116,7 @@ YIYI_SERVER_HOST=<服务器IP或域名>
 | `YIYI_REDIS_PASSWORD` | **留空表示不启用 Redis 密码**；填 `GENERATE_ON_INSTALL` 才自动生成 |
 | `YIYI_SERVICE_TOKEN` | 保持 `GENERATE_ON_INSTALL` 自动生成；已有部署必须填原值 |
 | `YIYI_NODE_TOKEN` | 保持 `GENERATE_ON_INSTALL`；脚本自动生成并持久化，用于节点平面鉴权 |
-| `YIYI_CREDENTIAL_MASTER_KEY` | 首次自动生成；升级保留原值，不得更换，随 `.env` 备份 |
+| `YIYI_CREDENTIAL_MASTER_KEY` | 安装脚本自动生成 Base64 编码的 32 字节密钥；旧部署缺失时补齐，已有值校验后保留，随 `.env` 备份 |
 | `YIYI_IMAGE_TAG` | 留空用 `latest`；生产环境建议锁定到不可变版本标签 |
 | `YIYI_DATA_DIR` | 留空用部署目录下的 `data/`；可填绝对或相对路径 |
 | `YIYI_STORAGE_MOUNT_DIR` | 可选。**挂载文件夹**（Storage 挂载数据根）改放别的盘时填，如 `/mnt/big/yiyi-mounts`；留空 = `<YIYI_DATA_DIR>/storage/mount-data` |
@@ -147,8 +147,8 @@ sudo ./install.sh
    一并创建、授权并校验（拒绝指向 `/` 或数据根目录）
 5. 从授权中心下载授权公钥，**与镜像内置的厂商公钥做一致性校验**，不一致直接失败
 6. 在拉取镜像前校验 Compose 解析结果严格为三个服务，且不含高权限配置
-7. 先起 PostgreSQL、Redis，再做四个数据库的**幂等存在性检查**（只创建缺失的库）
-8. 拉取镜像、启动应用容器并等待健康检查
+7. 拉取镜像，以容器用户 UID `10001` 实测数据目录读写权限（包括 NAS ACL）
+8. 启动 PostgreSQL、Redis，等待 PostgreSQL 完成初始化并接受 TCP SQL 查询，再补齐四个数据库；确认凭据主密钥可用后启动应用并等待健康检查
 9. 检查全部内部服务、**两个内置节点**与许可证状态
 
 ```bash
@@ -161,6 +161,15 @@ docker compose start
 
 > `install.sh` 会把 `COMPOSE_FILE=compose.yaml` 写进 `.env`，保证任何调用方式
 > 都解析到本分支的 Compose 文件。该变量由脚本维护，不要手工删除。
+
+安装中断后，保留 `.env` 与数据目录，修复报错后重跑 `sudo ./install.sh`。
+只有全部检查通过才写入 `.installed`；仅有 `.deployment-mode` 表示已选择部署模式。
+PostgreSQL 首次初始化可能较慢，不要通过清空数据目录来重试。
+应用保留镜像原有健康检查，启动宽限期为 12 分钟，安装最多等待 900 秒；
+全部服务提前就绪时会立即通过，不需要等满宽限期。
+
+旧版生成的十六进制凭据主密钥会在数据库就绪后检查：优先恢复原容器的有效密钥；
+仅在数据库没有加密数据时生成符合格式的新值。已有加密数据时必须恢复原密钥。
 
 ### 3. 访问并激活
 

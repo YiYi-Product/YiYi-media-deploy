@@ -42,7 +42,7 @@ account_upgrade_commit
 
 
 class InstallerMigrationTest(unittest.TestCase):
-    def run_key_setup(self, key="", credentials="0"):
+    def run_key_setup(self, key="", credentials="0", source="", recovered=""):
         with tempfile.TemporaryDirectory() as temporary:
             path = pathlib.Path(temporary, ".env")
             path.write_text("YIYI_CREDENTIAL_MASTER_KEY=" + key + "\n")
@@ -51,13 +51,28 @@ set -euo pipefail
 DEPLOY_DIR="$TEST_DIR"; db_user=yiyi
 env_value() { awk -F= -v key="$2" '$1==key {sub(/^[^=]*=/, "");print;exit}' "$1"; }
 set_env_value() { printf '%s=%s\n' "$2" "$3" >"$1"; chmod 0600 "$1"; }
-docker() { return 1; }
-compose() { case "$*" in *to_regclass*) echo t;; *"count(*)"*) echo "$TEST_CREDENTIALS";; *) return 1;; esac; }
+docker() {
+  [[ -n "$TEST_RECOVERED" ]] || return 1
+  case "$*" in
+    *compose.project*) echo yiyi;;
+    *compose.service*) echo yiyi-media;;
+    *Config.Env*) printf 'YIYI_CREDENTIAL_MASTER_KEY=%s\n' "$TEST_RECOVERED";;
+    *) return 1;;
+  esac
+}
+compose() {
+  case "$*" in
+    *information_schema.columns*) echo t;;
+    *"count(*)"*)
+      if [[ -z "$TEST_SOURCE" || "$*" == *"FROM $TEST_SOURCE WHERE"* ]]; then echo "$TEST_CREDENTIALS"; else echo 0; fi;;
+    *) return 1;;
+  esac
+}
 source "$TEST_SCRIPT"
 account_upgrade_ensure_key
 '''
             result = subprocess.run(["bash", "-c", mock], env=dict(os.environ, TEST_DIR=temporary,
-                TEST_SCRIPT=str(SCRIPT), TEST_CREDENTIALS=credentials), text=True, capture_output=True)
+                TEST_SCRIPT=str(SCRIPT), TEST_CREDENTIALS=credentials, TEST_SOURCE=source, TEST_RECOVERED=recovered), text=True, capture_output=True)
             return result, path.read_text()
 
     def test_first_install_generates_valid_key_without_printing_it(self):
@@ -85,6 +100,41 @@ account_upgrade_ensure_key
         result, content = self.run_key_setup("invalid-fixture")
         self.assertNotEqual(0, result.returncode)
         self.assertEqual("YIYI_CREDENTIAL_MASTER_KEY=invalid-fixture\n", content)
+
+    def test_legacy_hex_key_is_repaired_only_without_encrypted_data(self):
+        import base64
+        fixture = "ab" * 32
+        result, content = self.run_key_setup(fixture)
+        self.assertEqual(0, result.returncode, result.stderr)
+        key = content.split("=", 1)[1].strip()
+        self.assertEqual(32, len(base64.b64decode(key, validate=True)))
+        self.assertNotIn(key, result.stdout + result.stderr)
+        self.assertNotIn(fixture, result.stdout + result.stderr)
+        blocked, unchanged = self.run_key_setup(fixture, credentials="1")
+        self.assertNotEqual(0, blocked.returncode)
+        self.assertEqual("YIYI_CREDENTIAL_MASTER_KEY=" + fixture + "\n", unchanged)
+
+    def test_unreadable_encrypted_data_count_never_rotates_key(self):
+        result, content = self.run_key_setup("ab" * 32, credentials="unexpected-output")
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("YIYI_CREDENTIAL_MASTER_KEY=" + "ab" * 32 + "\n", content)
+
+    def test_every_encrypted_data_source_blocks_replacing_a_lost_key(self):
+        for source in ("t_cloud_account_asset_credential", "t_user_cloud_credential",
+                       "t_cloud_transfer_job", "t_pool_export_reference",
+                       "t_media_emby_connection", "t_media_moviepilot_connection"):
+            with self.subTest(source=source):
+                result, content = self.run_key_setup(credentials="1", source=source)
+                self.assertNotEqual(0, result.returncode)
+                self.assertEqual("YIYI_CREDENTIAL_MASTER_KEY=\n", content)
+
+    def test_old_container_key_is_restored_even_with_encrypted_data(self):
+        import base64
+        fixture = base64.b64encode(bytes(range(32))).decode()
+        result, content = self.run_key_setup("ab" * 32, credentials="1", recovered=fixture)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("YIYI_CREDENTIAL_MASTER_KEY=" + fixture + "\n", content)
+        self.assertNotIn(fixture, result.stdout + result.stderr)
 
     def run_install(self, failure="", exists="t", health=False):
         with tempfile.TemporaryDirectory() as temporary:

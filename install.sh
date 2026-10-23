@@ -41,6 +41,11 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
+if [[ "$(id -u)" != "0" ]]; then
+  echo "安装需要 root 权限，请使用 sudo ./install.sh（或先 sudo -i）。" >&2
+  exit 1
+fi
+
 for tool in docker openssl curl python3 flock; do
   command -v "$tool" >/dev/null 2>&1 || { echo "未安装 $tool" >&2; exit 1; }
 done
@@ -81,7 +86,7 @@ fi
 
 # ── 部署模式与历史拓扑检查 ──────────────────────────────────────────────────
 installed=false
-if [[ -f .installed || -s .deployment-mode ]]; then
+if [[ -f .installed ]]; then
   installed=true
 fi
 if [[ -s .deployment-mode ]]; then
@@ -319,6 +324,10 @@ DATA_LAYOUT=(
   "license/identity|0700|10001:10001"
   "license/lease|0700|10001:10001"
   "config/uploads|0750|10001:10001"
+  # 这三个父目录本身就是 bind mount 根，不能只给子目录授权。
+  "storage|0750|10001:10001"
+  "play-agent|0750|10001:10001"
+  "logs|0750|10001:10001"
   "storage/mount-data|0750|10001:10001"
   "storage/spool|0750|10001:10001"
   "storage/read-cache|0750|10001:10001"
@@ -349,7 +358,11 @@ prepare_data_dirs() {
       fi
       # 只在属主不符时递归修正，避免每次升级都动全量文件。
       if [[ "$(stat -c '%u:%g' "$target" 2>/dev/null || stat -f '%u:%g' "$target")" != "$owner" ]]; then
-        chown -R "$owner" "$target"
+        case "$relative" in
+          # 只修复挂载根本身；各子目录由自己的布局项决定是否递归修复。
+          storage|play-agent|logs) chown "$owner" "$target" ;;
+          *) chown -R "$owner" "$target" ;;
+        esac
       fi
     fi
   done
@@ -386,6 +399,39 @@ generate_optional_secret_if_requested() {
   if [[ "$value" == "GENERATE_ON_INSTALL" ]]; then
     set_env_value .env "$key" "$(openssl rand -hex 32)"
   fi
+}
+
+configure_credential_master_key() {
+  local credential_master_key
+  credential_master_key="$(env_value .env YIYI_CREDENTIAL_MASTER_KEY)"
+  if [[ -z "$credential_master_key" || "$credential_master_key" == "GENERATE_ON_INSTALL" ]]; then
+    if [[ "${postgres_data_existing:-false}" == true ]]; then
+      # 先让基础设施启动，查询有无加密数据后再决定；不能提前生成新密钥。
+      set_env_value .env YIYI_CREDENTIAL_MASTER_KEY GENERATE_ON_INSTALL
+      echo "凭据主密钥待恢复：数据库就绪后将检查旧容器与已有加密数据。" >&2
+      return 0
+    fi
+    # CloudCredentialCipher 要求 Base64 编码的 32 字节，不能复用上面的十六进制令牌生成器。
+    credential_master_key="$(openssl rand -base64 32)"
+    set_env_value .env YIYI_CREDENTIAL_MASTER_KEY "$credential_master_key"
+  fi
+  # 有效密钥始终保留；旧十六进制值交给数据库就绪后的安全检查处理。
+  if ! printf '%s' "$credential_master_key" | python3 -c '
+import base64, sys
+try:
+    key = base64.b64decode(sys.stdin.read(), validate=True)
+except ValueError:
+    sys.exit(1)
+sys.exit(0 if len(key) == 32 else 1)
+'; then
+    if [[ "$credential_master_key" =~ ^[0-9a-f]{64}$ ]]; then
+      echo "检测到旧式十六进制凭据主密钥；数据库就绪后，仅在没有加密数据时修复。" >&2
+      return 0
+    fi
+    echo "YIYI_CREDENTIAL_MASTER_KEY 格式无效：必须是 Base64 编码的 32 字节，请恢复原密钥；不会自动替换已有值。" >&2
+    return 1
+  fi
+  chmod 0600 .env
 }
 
 configure_data_dir
@@ -432,6 +478,7 @@ generate_secret_if_needed YIYI_DB_PASSWORD
 generate_optional_secret_if_requested YIYI_REDIS_PASSWORD
 generate_secret_if_needed YIYI_SERVICE_TOKEN
 generate_secret_if_needed YIYI_NODE_TOKEN
+configure_credential_master_key
 
 # ── Compose 调用 ────────────────────────────────────────────────────────────
 # 单机版没有 profile，因此不带 --profile。
@@ -485,6 +532,7 @@ sync_license_public_key() {
     curl_proto=(--proto '=http')
   fi
   if ! curl "${curl_proto[@]}" \
+      --connect-timeout 10 --max-time 60 --retry 3 --retry-delay 2 \
       --fail --silent --show-error "$host_fetch_url/api/v1/public-keys" | \
     python3 -c '
 import json, sys
@@ -529,13 +577,14 @@ EOF
 
 # ── 拉取镜像前校验 Compose 与 Edition 配置（计划 §12.2）─────────────────────
 preflight() {
-  if grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=.*(GENERATE_ON_INSTALL|example\.invalid)' .env; then
+  if grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=.*(GENERATE_ON_INSTALL|example\.invalid)' \
+      <<< "$(grep -Ev '^YIYI_CREDENTIAL_MASTER_KEY=' .env)"; then
     echo "配置仍包含占位值" >&2
     return 1
   fi
 
   local key value resolved
-  for key in YIYI_SERVER_HOST YIYI_DB_USER YIYI_DB_PASSWORD YIYI_SERVICE_TOKEN YIYI_NODE_TOKEN YIYI_LICENSE_SERVER_URL; do
+  for key in YIYI_SERVER_HOST YIYI_DB_USER YIYI_DB_PASSWORD YIYI_SERVICE_TOKEN YIYI_NODE_TOKEN YIYI_CREDENTIAL_MASTER_KEY YIYI_LICENSE_SERVER_URL; do
     value="$(env_value .env "$key")"
     [[ -n "$value" && "$value" != REPLACE_* ]] || { echo "缺少 $key" >&2; return 1; }
   done
@@ -562,21 +611,21 @@ EOF
   fi
 
   # 单机版不允许高权限：不给聚合容器 privileged / SYS_ADMIN / /dev/fuse（计划 §3.4、§11）。
-  if printf '%s\n' "$resolved" | grep -Eq '^[[:space:]]*privileged:[[:space:]]*true'; then
+  if grep -Eq '^[[:space:]]*privileged:[[:space:]]*true' <<< "$resolved"; then
     echo "单机版 Compose 不允许 privileged: true" >&2
     return 1
   fi
-  if printf '%s\n' "$resolved" | grep -Eq '^[[:space:]]*cap_add:'; then
+  if grep -Eq '^[[:space:]]*cap_add:' <<< "$resolved"; then
     echo "单机版 Compose 不允许添加 capability（含 SYS_ADMIN）" >&2
     return 1
   fi
-  if printf '%s\n' "$resolved" | grep -Eq '^[[:space:]]*devices:' || printf '%s\n' "$resolved" | grep -q '/dev/fuse'; then
+  if grep -Eq '^[[:space:]]*devices:' <<< "$resolved" || grep -q '/dev/fuse' <<< "$resolved"; then
     echo "单机版 Compose 不允许挂载 /dev/fuse" >&2
     return 1
   fi
 
   # 部署形态必须固定为 STANDALONE；它只收窄能力，真正的授权边界是签名租约。
-  if ! printf '%s\n' "$resolved" | grep -Eq '^[[:space:]]*YIYI_DEPLOYMENT_MODE:[[:space:]]*"?STANDALONE"?[[:space:]]*$'; then
+  if ! grep -Eq '^[[:space:]]*YIYI_DEPLOYMENT_MODE:[[:space:]]*"?STANDALONE"?[[:space:]]*$' <<< "$resolved"; then
     echo "compose.yaml 未固定 YIYI_DEPLOYMENT_MODE=STANDALONE" >&2
     return 1
   fi
@@ -590,8 +639,8 @@ EOF
   local required_var
   for required_var in YIYI_DB_USER YIYI_DB_PASSWORD YIYI_REDIS_PASSWORD YIYI_IMAGE_TAG \
                       SPRING_DATASOURCE_URL SPRING_DATASOURCE_USERNAME SPRING_DATASOURCE_PASSWORD \
-                      REDIS_HOST REDIS_PORT YIYI_SERVICE_TOKEN YIYI_NODE_TOKEN YIYI_LICENSE_SERVER_URL LOG_DIR; do
-    if ! printf '%s\n' "$resolved" | grep -Eq "^[[:space:]]*${required_var}:"; then
+                      REDIS_HOST REDIS_PORT YIYI_SERVICE_TOKEN YIYI_NODE_TOKEN YIYI_CREDENTIAL_MASTER_KEY YIYI_LICENSE_SERVER_URL LOG_DIR; do
+    if ! grep -Eq "^[[:space:]]*${required_var}:" <<< "$resolved"; then
       echo "compose.yaml 未向 yiyi-media 提供 ${required_var}，聚合镜像无法正确启动内部服务" >&2
       return 1
     fi
@@ -800,11 +849,60 @@ healthcheck() {
 # 首次初始化由 postgres-init.sql 建库；升级旧数据目录时 PostgreSQL **不会**
 # 重新执行初始化 SQL，因此这里在 PostgreSQL 健康后逐个检查，只创建缺失的库，
 # 绝不覆盖或删除已有数据库。
+# 官方镜像初始化时会启动一个仅监听 Unix socket 的临时 PostgreSQL。
+# 必须通过 TCP 做真实 SQL 查询，避免 pg_isready 提前返回成功。
+postgres_query() {
+  compose exec -T postgres sh -ec '
+    export PGPASSWORD="$POSTGRES_PASSWORD" PGCONNECT_TIMEOUT=5
+    exec psql -X -w -h 127.0.0.1 -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" "$@"
+  ' sh "$@" </dev/null
+}
+
+wait_for_postgres() {
+  local attempt result
+  echo "等待 PostgreSQL 完成初始化并接受 TCP 查询："
+  for ((attempt=1; attempt<=30; attempt++)); do
+    if result="$(postgres_query -d postgres -tAc 'SELECT 1' 2>/dev/null)" && [[ "$result" == "1" ]]; then
+      echo "  PostgreSQL TCP 查询就绪"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "PostgreSQL 尚未就绪或账号密码不匹配，请检查 docker compose logs --tail=100 postgres。" >&2
+  return 1
+}
+
+# 用应用的实际 UID 验证 NAS/ACL 和 bind mount 权限，提前给出具体路径。
+check_application_data_access() {
+  echo "检查容器用户的数据目录读写权限："
+  compose run --rm --no-deps --user 10001:10001 --entrypoint python3 yiyi-media -c '
+import os, sys, tempfile
+roots = ["/var/lib/yiyi-license", "/var/run/yiyi-license", "/data/config/uploads",
+         "/data/storage", "/data/play-agent", "/data/logs"]
+paths = set(roots)
+for root in roots:
+    try:
+        paths.update(os.path.join(root, name) for name in os.listdir(root)
+                     if os.path.isdir(os.path.join(root, name)))
+    except OSError:
+        pass
+failed = False
+for path in sorted(paths):
+    try:
+        with tempfile.TemporaryFile(dir=path) as probe:
+            probe.write(b"yiyi-install-permission-check")
+            probe.flush()
+    except OSError:
+        print("容器用户无法读写目录：" + path + "；请检查宿主机属主、NAS ACL 或只读挂载。", file=sys.stderr)
+        failed = True
+sys.exit(1 if failed else 0)
+' </dev/null
+}
+
 ensure_databases() {
   local db existing created=0
   for db in "${YIYI_DATABASES[@]}"; do
-    if ! existing="$(compose exec -T postgres \
-        psql -U "$db_user" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$db'" 2>/dev/null)"; then
+    if ! existing="$(postgres_query -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$db'")"; then
       echo "无法查询 PostgreSQL 数据库列表" >&2
       return 1
     fi
@@ -812,8 +910,13 @@ ensure_databases() {
       echo "  数据库已存在：$db"
       continue
     fi
-    if ! compose exec -T postgres \
-        psql -v ON_ERROR_STOP=1 -U "$db_user" -d postgres -c "CREATE DATABASE \"$db\"" >/dev/null; then
+    if ! postgres_query -d postgres -c "CREATE DATABASE \"$db\"" >/dev/null; then
+      # 与初始化脚本或另一安装进程并发时，重新确认结果，而不是误报失败。
+      existing="$(postgres_query -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$db'" 2>/dev/null)" || return 1
+      if [[ "$existing" == "1" ]]; then
+        echo "  数据库已就绪：$db"
+        continue
+      fi
       echo "创建数据库失败：$db" >&2
       return 1
     fi
@@ -904,6 +1007,8 @@ fi
 
 if [[ "$installed" == true ]]; then
   echo "正在升级单机版部署（STANDALONE）"
+else
+  echo "正在安装单机版部署（STANDALONE）；可安全重跑以继续未完成的安装。"
 fi
 sync_license_public_key
 preflight
@@ -919,7 +1024,9 @@ fi
 
 # 先只起基础设施，再补齐数据库，最后起应用容器：
 # 这样四个库在 Flyway 启动前就已就绪，升级旧数据目录也不会漏库。
+check_application_data_access
 compose up -d postgres redis --wait --wait-timeout 300
+wait_for_postgres
 ensure_databases
 
 
@@ -943,6 +1050,7 @@ account_upgrade_prepare
 # 配置未变时不会重启 yiyi-media，不能保证连接池重新解析服务名。
 # 因此安装/升级每次都只重建聚合应用容器：不再动已就绪的数据容器，
 # 同时让全部内部服务从干净进程中重新解析 postgres / redis。
+echo "启动应用并等待全部内部服务就绪（首次数据库迁移可能需要数分钟，最长等待 900 秒）。"
 if [[ -n "$legacy_reason" ]]; then
   # 迁移路径：保留旧容器，因此不加 --remove-orphans（计划 §13.4）。
   if ! compose up -d --no-deps --force-recreate --wait --wait-timeout 900 yiyi-media; then
@@ -965,6 +1073,9 @@ account_upgrade_commit
 touch .installed
 chmod 0600 .installed
 
+app_port="$(env_value .env YIYI_APP_PORT)"
+play_agent_bind_host="$(env_value .env YIYI_PLAY_AGENT_BIND_HOST)"
+play_agent_port="$(env_value .env YIYI_PLAY_AGENT_PORT)"
 cat <<EOF
 
 单机版部署完成：三个容器均已启动。
@@ -972,10 +1083,10 @@ cat <<EOF
   YiYi-media-postgres  数据库
   YiYi-media-redis     缓存
 
-  网页入口：http://$public_host:18080
+  网页入口：http://$public_host:${app_port:-18080}
   首次使用直接在网页输入发布方提供的 STANDALONE 一次性授权码激活。
 
-  Play Agent 默认只绑定宿主机 127.0.0.1:19090，供本机 nginx / Caddy 反代。
+  Play Agent 绑定宿主机 ${play_agent_bind_host:-0.0.0.0}:${play_agent_port:-19090}，供播放客户端连接。
   其余应用端口只在容器内部，PostgreSQL 与 Redis 不发布到宿主机。
 
   日常命令（无需 -f 或 --profile）：

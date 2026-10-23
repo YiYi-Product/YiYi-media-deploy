@@ -18,38 +18,59 @@ account_upgrade_stop_application() {
   done
 }
 
+account_upgrade_key_valid() {
+  printf '%s' "$1" | python3 -c 'import base64,sys; sys.exit(0 if len(base64.b64decode(sys.stdin.read(),validate=True)) == 32 else 1)' 2>/dev/null
+}
+
 account_upgrade_ensure_key() {
-  local value table present count
+  local value table present count spec column recovered=""
   value="$(env_value "$DEPLOY_DIR/.env" YIYI_CREDENTIAL_MASTER_KEY)"
-  if [[ -z "$value" || "$value" == GENERATE_ON_INSTALL ]]; then
-    # Preserve a key already present on the old container, without displaying it.
-    local container project service
-    for container in YiYi-media YiYi-media-standalone; do
-      project="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$container" 2>/dev/null || true)"
-      service="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$container" 2>/dev/null || true)"
-      [[ "$project" == yiyi && ( "$service" == yiyi-media || "$service" == yiyi-app ) ]] || continue
-      value="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container" 2>/dev/null | awk 'index($0,"YIYI_CREDENTIAL_MASTER_KEY=")==1 {sub(/^[^=]*=/, "");print;exit}' || true)"
-      [[ -z "$value" || "$value" == GENERATE_ON_INSTALL ]] || break
-    done
-    if [[ -z "$value" || "$value" == GENERATE_ON_INSTALL ]]; then
-      for table in t_cloud_account_asset_credential t_user_cloud_credential; do
-        present="$(compose exec -T postgres psql -X -qAt -v ON_ERROR_STOP=1 -U "$db_user" -d yiyi_media -c "SELECT to_regclass('public.$table') IS NOT NULL;")" || return 1
-        if [[ "$present" == t ]]; then
-          count="$(compose exec -T postgres psql -X -qAt -v ON_ERROR_STOP=1 -U "$db_user" -d yiyi_media -c "SELECT count(*) FROM $table;")" || return 1
-          if [[ "$count" != 0 ]]; then
-            echo '已有加密凭据但原主密钥丢失，已安全中止；不能生成新密钥覆盖。' >&2
-            return 1
-          fi
-        elif [[ "$present" != f ]]; then return 1; fi
-      done
-      value="$(openssl rand -base64 32)" || return 1
-    fi
-    set_env_value "$DEPLOY_DIR/.env" YIYI_CREDENTIAL_MASTER_KEY "$value"
+  if account_upgrade_key_valid "$value"; then
+    return 0
   fi
-  if ! printf '%s' "$value" | python3 -c 'import base64,sys; assert len(base64.b64decode(sys.stdin.read(),validate=True)) == 32' 2>/dev/null; then
-    echo '凭据主密钥格式无效，升级已中止。' >&2
+  # 只自动处理缺失值和旧版随机生成的十六进制值，手填的其它错误仍需恢复原值。
+  if [[ -n "$value" && "$value" != GENERATE_ON_INSTALL && ! "$value" =~ ^[0-9a-f]{64}$ ]]; then
+    echo '凭据主密钥格式无效，升级已中止；不会覆盖已有值。' >&2
     return 1
   fi
+  # 优先恢复旧容器里的有效密钥；不向终端或进程参数输出凭据。
+  local container project service candidate
+  for container in YiYi-media YiYi-media-standalone; do
+    project="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$container" 2>/dev/null || true)"
+    service="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$container" 2>/dev/null || true)"
+    [[ "$project" == yiyi && ( "$service" == yiyi-media || "$service" == yiyi-app ) ]] || continue
+    candidate="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container" 2>/dev/null | awk 'index($0,"YIYI_CREDENTIAL_MASTER_KEY=")==1 {sub(/^[^=]*=/, "");print;exit}' || true)"
+    if account_upgrade_key_valid "$candidate"; then
+      recovered="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$recovered" ]]; then
+    # 包括云盘、转存分享、Emby 与 MoviePilot；任意一处有密文都不能换密钥。
+    for spec in t_cloud_account_asset_credential:encrypted_payload t_user_cloud_credential:encrypted_payload \
+                t_cloud_transfer_job:export_value t_pool_export_reference:export_value \
+                t_media_emby_connection:encrypted_api_key t_media_moviepilot_connection:encrypted_callback_key; do
+      table="${spec%:*}"; column="${spec#*:}"
+      present="$(compose exec -T postgres psql -X -qAt -v ON_ERROR_STOP=1 -U "$db_user" -d yiyi_media \
+        -c "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='$table' AND column_name='$column');")" || return 1
+      if [[ "$present" == t ]]; then
+        count="$(compose exec -T postgres psql -X -qAt -v ON_ERROR_STOP=1 -U "$db_user" -d yiyi_media \
+          -c "SELECT count(*) FROM $table WHERE $column IS NOT NULL AND $column <> ''; ")" || return 1
+        [[ "$count" =~ ^[0-9]+$ ]] || return 1
+        if [[ "$count" != 0 ]]; then
+          echo '已有加密数据但原主密钥缺失或无效，已安全中止；请恢复原密钥，不会生成新密钥覆盖。' >&2
+          return 1
+        fi
+      elif [[ "$present" != f ]]; then return 1; fi
+    done
+    recovered="$(openssl rand -base64 32)" || return 1
+    echo '已确认没有加密数据，初始化 Base64 凭据主密钥（已有有效密钥始终保留）。'
+  else
+    echo '已从原应用容器恢复凭据主密钥。'
+  fi
+  account_upgrade_key_valid "$recovered" || return 1
+  set_env_value "$DEPLOY_DIR/.env" YIYI_CREDENTIAL_MASTER_KEY "$recovered"
+  chmod 0600 "$DEPLOY_DIR/.env"
 }
 
 account_upgrade_restart_old() {

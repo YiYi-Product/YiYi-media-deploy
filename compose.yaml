@@ -104,7 +104,7 @@ services:
       # ── 服务间令牌 ───────────────────────────────────────────────────
       YIYI_SERVICE_TOKEN: ${YIYI_SERVICE_TOKEN:?请设置高熵服务令牌}
       YIYI_NODE_TOKEN: ${YIYI_NODE_TOKEN:?请设置高熵节点令牌}
-      YIYI_CREDENTIAL_MASTER_KEY: ${YIYI_CREDENTIAL_MASTER_KEY:-}
+      YIYI_CREDENTIAL_MASTER_KEY: ${YIYI_CREDENTIAL_MASTER_KEY:?请先运行 install.sh 初始化云盘凭据主密钥}
 
       # ── 许可证 ───────────────────────────────────────────────────────
       YIYI_LICENSE_SERVER_URL: ${YIYI_LICENSE_SERVER_URL:?请设置授权服务器 HTTPS 地址}
@@ -164,8 +164,12 @@ services:
       # 默认绑 0.0.0.0；若前面有 Caddy/nginx 反代，可改为 127.0.0.1，
       # 并在「节点管理」里把该节点的对外地址改成反代域名与端口。
       - "${YIYI_PLAY_AGENT_BIND_HOST:-0.0.0.0}:${YIYI_PLAY_AGENT_PORT:-19090}:19090"
-    # 沿用聚合镜像自带的 HEALTHCHECK（/opt/yiyi/healthcheck.py）：它不只看进程存活，
-    # 而是逐一确认全部内部服务与两个内置节点的状态（计划 §5.2、§16）。
+    # 沿用镜像自带 HEALTHCHECK 的命令、间隔与重试次数，只延长首次启动宽限期。
+    # NAS 慢盘上首次 Flyway + 八个服务顺序启动可能超过镜像默认的 5 分钟；
+    # start_period 期间成功仍会立即变 healthy，失败暂不计数，业务健康判据保持不变。
+    # 与 install.sh 的 --wait-timeout 900 配套，实际启动失败仍会超时退出。
+    healthcheck:
+      start_period: 12m
 
   postgres:
     image: postgres:16.4
@@ -184,7 +188,7 @@ services:
     # 不向宿主机发布端口：只允许 yiyi-media 通过 Compose 私有网络访问。
     # 需要 psql 排障时用 `docker compose exec postgres psql ...`。
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d postgres"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d postgres"]
       interval: 5s
       timeout: 3s
       retries: 20
