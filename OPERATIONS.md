@@ -90,7 +90,7 @@ data/
 在 `.env` 设置 `YIYI_LOCAL_DISK_MOUNTS="/vol1/1000/Movies /vol2/1000/TV"`，
 重跑 `sudo ./install.sh` 后，两个目录在容器中保持原路径，供网页「本地磁盘」使用。
 支持 `/宿主目录:/容器目录:ro` 只读映射，默认读写；路径必须存在且不能包含空格。
-不会自动改已有目录的属主或权限，容器用户 UID `10001` 必须有相应访问权限。
+不会自动改已有目录的属主或权限，容器实际运行用户必须有相应访问权限，安装时会显示 UID/GID 并验证。
 
 脚本自动生成 `compose.local-disks.yaml`，并维护
 `COMPOSE_FILE=compose.yaml:compose.local-disks.yaml`，日常 Compose 命令也会加载。

@@ -78,6 +78,26 @@ class CredentialMasterKeyTest(unittest.TestCase):
 
 
 class InstallContractTest(unittest.TestCase):
+    def test_permission_probe_inherits_runtime_user_instead_of_directory_owner(self):
+        script = (ROOT / "install.sh").read_text()
+        function = re.search(r"^check_application_data_access\(\) \{.*?^\}", script, re.M | re.S).group()
+        with tempfile.TemporaryDirectory() as directory:
+            override = Path(directory) / "override.json"
+            override.write_text('{"services":{"yiyi-media":{"volumes":[]}}}')
+            # A UID override would reject a NAS directory that the real application can use.
+            mock = '''
+compose() {
+  for arg in "$@"; do
+    case "$arg" in --user|--user=*) echo "unexpected runtime user override" >&2; return 99 ;; esac
+  done
+  [[ "$*" == *"--entrypoint python3 yiyi-media -c"* ]]
+}
+'''
+            result = subprocess.run(["bash", "-euo", "pipefail", "-c",
+                function + "\n" + mock + '\nLOCAL_DISK_COMPOSE_FILE="$1"\ncheck_application_data_access',
+                "test", str(override)], capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+
     def test_application_is_recreated_after_infrastructure(self) -> None:
         script = (ROOT / "install.sh").read_text(encoding="utf-8")
         infrastructure = "compose up -d postgres redis --wait --wait-timeout 300"

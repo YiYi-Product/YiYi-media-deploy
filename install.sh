@@ -873,13 +873,15 @@ wait_for_postgres() {
   return 1
 }
 
-# 用应用的实际 UID 验证 NAS/ACL 和 bind mount 权限，提前给出具体路径。
+# 继承 Compose / 镜像的运行用户，验证 NAS/ACL 和 bind mount 权限。
+# 不强制使用数据目录的属主 UID：它不一定是当前镜像里 Storage 的运行 UID。
 check_application_data_access() {
-  echo "检查容器用户的数据目录读写权限："
+  echo "检查容器实际运行用户的数据目录读写权限："
   local local_mounts
   local_mounts="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["services"]["yiyi-media"]["volumes"]))' "$LOCAL_DISK_COMPOSE_FILE")"
-  compose run --rm --no-deps --user 10001:10001 --entrypoint python3 yiyi-media -c '
+  compose run --rm --no-deps --entrypoint python3 yiyi-media -c '
 import os, sys, tempfile
+print("  运行用户：UID=" + str(os.geteuid()) + "，GID=" + str(os.getegid()))
 roots = ["/var/lib/yiyi-license", "/var/run/yiyi-license", "/data/config/uploads",
          "/data/storage", "/data/play-agent", "/data/logs"]
 paths = set(roots)
@@ -898,20 +900,25 @@ for path in sorted(paths):
     except OSError:
         print("容器用户无法读写目录：" + path + "；请检查宿主机属主、NAS ACL 或只读挂载。", file=sys.stderr)
         failed = True
-# 额外媒体目录不改属主或权限；按配置的 ro/rw 验证容器 UID 的实际访问能力。
+# 额外媒体目录不改属主或权限；区分读取与写入错误，避免误导只读配置。
 import json
 for mount in json.loads(sys.argv[1]):
     path = mount["target"].replace("$$", "$")
     try:
         with os.scandir(path) as entries:
             next(entries, None)
-        if not mount["read_only"]:
+    except OSError as error:
+        print("容器运行用户无法读取本地磁盘目录：" + path + "；" + str(error) + "；请检查 NAS ACL 或目录权限（改成 :ro 也需要读取权限）。", file=sys.stderr)
+        failed = True
+        continue
+    if not mount["read_only"]:
+        try:
             with tempfile.TemporaryFile(dir=path) as probe:
                 probe.write(b"yiyi-install-permission-check")
                 probe.flush()
-    except OSError:
-        print("容器用户无法按配置访问本地磁盘目录：" + path + "；请检查权限或用 :ro 配置只读访问。", file=sys.stderr)
-        failed = True
+        except OSError as error:
+            print("容器运行用户无法写入本地磁盘目录：" + path + "；" + str(error) + "；请检查 NAS ACL 或目录权限，仅需读取时可用 :ro。", file=sys.stderr)
+            failed = True
 sys.exit(1 if failed else 0)
 ' "$local_mounts" </dev/null
 }
