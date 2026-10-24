@@ -27,3 +27,7 @@ migration-report-*.json
 /.account-upgrade-backup
 __pycache__/
 *.py[cod]
+
+# 由 install.sh 根据本机目录配置生成。
+/compose.local-disks.yaml
+/compose.local-disks.yaml.*

@@ -119,6 +119,7 @@ YIYI_SERVER_HOST=<服务器IP或域名>
 | `YIYI_CREDENTIAL_MASTER_KEY` | 安装脚本自动生成 Base64 编码的 32 字节密钥；旧部署缺失时补齐，已有值校验后保留，随 `.env` 备份 |
 | `YIYI_IMAGE_TAG` | 留空用 `latest`；生产环境建议锁定到不可变版本标签 |
 | `YIYI_DATA_DIR` | 留空用部署目录下的 `data/`；可填绝对或相对路径 |
+| `YIYI_LOCAL_DISK_MOUNTS` | 可选。额外本地磁盘目录，多个用空格分隔，例如 `"/vol1/1000/Movies /vol2/1000/TV"`；支持 `/宿主目录:/容器目录[:ro或rw]` |
 | `YIYI_STORAGE_MOUNT_DIR` | 可选。**挂载文件夹**（Storage 挂载数据根）改放别的盘时填，如 `/mnt/big/yiyi-mounts`；留空 = `<YIYI_DATA_DIR>/storage/mount-data` |
 | `YIYI_PLAY_AGENT_VFS_CACHE_DIR` | 可选。**VFS 内容缓存**改放更快的盘时填，如 `/mnt/ssd/yiyi-vfs`；留空 = `<YIYI_DATA_DIR>/play-agent/vfs-cache` |
 
@@ -159,8 +160,9 @@ docker compose stop
 docker compose start
 ```
 
-> `install.sh` 会把 `COMPOSE_FILE=compose.yaml` 写进 `.env`，保证任何调用方式
-> 都解析到本分支的 Compose 文件。该变量由脚本维护，不要手工删除。
+> `install.sh` 自动生成 `compose.local-disks.yaml`，并把
+> `COMPOSE_FILE=compose.yaml:compose.local-disks.yaml` 写进 `.env`。
+> 安装、升级与日常 `docker compose` 命令都会带上本地目录，不需要手工改 Compose。
 
 安装中断后，保留 `.env` 与数据目录，修复报错后重跑 `sudo ./install.sh`。
 只有全部检查通过才写入 `.installed`；仅有 `.deployment-mode` 表示已选择部署模式。
@@ -237,6 +239,26 @@ PostgreSQL 不会重新执行初始化 SQL**，因此安装脚本会在 PostgreS
 
 备份清单见 [`OPERATIONS.md`](OPERATIONS.md)：四个业务库、许可证身份、上传文件与
 Storage 持久化目录是必须项；`read-cache`、`vfs-cache`、`image-cache` 是可重建的缓存。
+
+#### 挂载多个本地媒体目录
+
+只在 `.env` 填一个参数，多个目录用空格分隔：
+
+```dotenv
+YIYI_LOCAL_DISK_MOUNTS="/vol1/1000/Movies /vol2/1000/TV"
+```
+
+运行 `sudo ./install.sh` 后，网页添加「本地磁盘」时分别填写相同根路径即可。
+也可指定不同的容器路径与只读访问：
+
+```dotenv
+YIYI_LOCAL_DISK_MOUNTS="/vol1/1000/Movies:/media/movies:ro /vol2/1000/TV:/media/tv"
+```
+
+此时网页根路径填 `/media/movies` 和 `/media/tv`。默认读写，`:ro` 只读，`:rw` 读写。
+目录必须已存在且为绝对路径，路径内不支持空格。脚本不会改这些目录的属主或权限；
+容器 UID `10001` 需要具备相应访问权限。无效路径、重复目标、覆盖应用目录会中止安装。
+清空该参数并重跑安装即可取消额外挂载，宿主机文件保留。生成文件无需手工编辑。
 
 ### 6. 端口与网络
 

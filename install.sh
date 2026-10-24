@@ -21,6 +21,7 @@ DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DEPLOY_DIR"
 
 COMPOSE_FILE="$DEPLOY_DIR/compose.yaml"
+LOCAL_DISK_COMPOSE_FILE="$DEPLOY_DIR/compose.local-disks.yaml"
 EXPECTED_SERVICES="postgres redis yiyi-media"
 # 单机版固定承载的四个业务库（计划 §6）。
 YIYI_DATABASES=(yiyi_config yiyi_user yiyi_media yiyi_storage)
@@ -177,10 +178,10 @@ fi
 # 单机版不使用 profile。COMPOSE_PROFILES 写成空值，避免旧 .env 里残留的
 # single/control 等值让 docker compose 意外启用别的服务。
 #
-# COMPOSE_FILE 显式指向单机版 Compose：仓库里同时存在 compose.distributed.yaml，
-# 而 `docker compose` 默认按固定文件名自动发现（compose.yaml 优先级最高）。
-# 显式写死可以保证任何目录、任何调用方式都只会解析到本文件。
-set_env_value .env COMPOSE_FILE "compose.yaml"
+# COMPOSE_FILE 显式指向单机版主配置与生成的本地磁盘配置，避免混入其它部署形态。
+# 与分布式 Storage 沿用同一参数；生成文件同时供安装与日常 Compose 命令使用。
+python3 "$DEPLOY_DIR/scripts/configure-local-disks.py" "$LOCAL_DISK_COMPOSE_FILE" "$(env_value .env YIYI_LOCAL_DISK_MOUNTS)"
+set_env_value .env COMPOSE_FILE "compose.yaml:compose.local-disks.yaml"
 set_env_value .env YIYI_DEPLOYMENT_MODE "STANDALONE"
 set_env_value .env COMPOSE_PROFILES ""
 printf '%s\n' "STANDALONE" > .deployment-mode
@@ -483,7 +484,7 @@ configure_credential_master_key
 # ── Compose 调用 ────────────────────────────────────────────────────────────
 # 单机版没有 profile，因此不带 --profile。
 compose() {
-  docker compose --env-file "$DEPLOY_DIR/.env" -f "$COMPOSE_FILE" "$@"
+  docker compose --env-file "$DEPLOY_DIR/.env" -f "$COMPOSE_FILE" -f "$LOCAL_DISK_COMPOSE_FILE" "$@"
 }
 
 # ── 授权公钥（信任根）同步 ──────────────────────────────────────────────────
@@ -875,6 +876,8 @@ wait_for_postgres() {
 # 用应用的实际 UID 验证 NAS/ACL 和 bind mount 权限，提前给出具体路径。
 check_application_data_access() {
   echo "检查容器用户的数据目录读写权限："
+  local local_mounts
+  local_mounts="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["services"]["yiyi-media"]["volumes"]))' "$LOCAL_DISK_COMPOSE_FILE")"
   compose run --rm --no-deps --user 10001:10001 --entrypoint python3 yiyi-media -c '
 import os, sys, tempfile
 roots = ["/var/lib/yiyi-license", "/var/run/yiyi-license", "/data/config/uploads",
@@ -895,8 +898,22 @@ for path in sorted(paths):
     except OSError:
         print("容器用户无法读写目录：" + path + "；请检查宿主机属主、NAS ACL 或只读挂载。", file=sys.stderr)
         failed = True
+# 额外媒体目录不改属主或权限；按配置的 ro/rw 验证容器 UID 的实际访问能力。
+import json
+for mount in json.loads(sys.argv[1]):
+    path = mount["target"].replace("$$", "$")
+    try:
+        with os.scandir(path) as entries:
+            next(entries, None)
+        if not mount["read_only"]:
+            with tempfile.TemporaryFile(dir=path) as probe:
+                probe.write(b"yiyi-install-permission-check")
+                probe.flush()
+    except OSError:
+        print("容器用户无法按配置访问本地磁盘目录：" + path + "；请检查权限或用 :ro 配置只读访问。", file=sys.stderr)
+        failed = True
 sys.exit(1 if failed else 0)
-' </dev/null
+' "$local_mounts" </dev/null
 }
 
 ensure_databases() {
