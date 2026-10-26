@@ -287,7 +287,7 @@ YIYI_LOCAL_DISK_MOUNTS="/vol1/1000/Movies:/media/movies:ro /vol2/1000/TV:/media/
 
 单机版默认关闭主机 FUSE 挂载：聚合容器**不使用 `privileged`**、不授予 `SYS_ADMIN`、
 不挂载 `/dev/fuse`。把 Storage 与其它服务放进同一个容器后，为挂载提权会让同一容器内
-全部服务共享更高权限。
+全部服务共享更高权限。需要时可按[开启步骤](#可选开启-fuse-主机挂载)显式启用。
 
 关闭 FUSE 主机挂载不影响这些能力：**云盘管理、文件浏览、上传下载、媒体同步与刮削照常可用**。
 
@@ -496,3 +496,43 @@ YIYI_IMAGE_TAG=2026.09.20-101530
 - 生产环境应为网页入口配置 HTTPS。
 
 端口矩阵、备份清单与排障见 [`OPERATIONS.md`](OPERATIONS.md)。
+
+## 可选：开启 FUSE 主机挂载
+
+默认关闭。仅支持原生 Linux Docker 主机。开启后，聚合容器内全部服务共享新增的
+`SYS_ADMIN` 权限和 `/dev/fuse` 设备，并放开容器 AppArmor 配置，仍不使用 `privileged`。
+镜像已包含 FUSE 运行库，需要使用支持该开关的新版镜像。
+
+在宿主机准备设备与专用目录（Debian / Ubuntu 示例）：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y fuse3
+sudo modprobe fuse
+test -c /dev/fuse
+sudo mkdir -p /mnt/yiyi
+mountpoint -q /mnt/yiyi || sudo mount --bind /mnt/yiyi /mnt/yiyi
+sudo mount --make-rshared /mnt/yiyi
+findmnt -o TARGET,PROPAGATION --target /mnt/yiyi
+```
+
+在 `.env` 设置后，重新运行 `sudo ./install.sh`：
+
+```dotenv
+YIYI_FUSE_ENABLED=true
+YIYI_FUSE_MOUNT_DIR=/mnt/yiyi
+```
+
+安装脚本检查设备和 shared 传播属性，生成 `compose.fuse.yaml` 并写入 `COMPOSE_FILE`。
+因此日常 `docker compose` 命令会沿用 FUSE 配置，不需手写提权参数。
+自定义宿主目录时，容器内目录仍为 `/mnt/yiyi`。在「文件运维」创建挂载时，
+本地挂载点填 `/mnt/yiyi` 下的子目录，例如 `/mnt/yiyi/gdrive`。
+不要将本地磁盘映射配置到 `/mnt/yiyi` 或其父子目录。
+
+主机重启后应在 YiYi 容器启动前重新准备 bind mount 和 shared 传播属性，
+或通过系统启动配置持久化。其他容器读取挂载时，绑定宿主目录并使用 `rslave` 传播，
+读取进程需使用与挂载进程相同的 UID（当前镜像为 root），并满足目录权限。
+
+关闭前先在「文件运维」卸载全部挂载并关闭自动挂载，再设置
+`YIYI_FUSE_ENABLED=false` 并重跑 `sudo ./install.sh`，以移除新增权限和设备。
+关闭不会删除网盘文件。Docker Desktop 不支持将此挂载传播到 macOS / Windows 主机。

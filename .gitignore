@@ -31,3 +31,6 @@ __pycache__/
 # 由 install.sh 根据本机目录配置生成。
 /compose.local-disks.yaml
 /compose.local-disks.yaml.*
+
+/compose.fuse.yaml
+/compose.fuse.yaml.*

@@ -408,7 +408,9 @@ docker compose exec postgres psql -U "$YIYI_DB_USER" -d yiyi_config
   恢复旧数据库时安装脚本会强制要求填写原值。
 - `YIYI_NODE_TOKEN` 由安装脚本自动生成并持久化，与服务令牌独立；升级时不要删除已有值。
 - 单机版默认关闭主机 FUSE 挂载，聚合容器不使用 `privileged`、不授予 `SYS_ADMIN`、
-  不挂载 `/dev/fuse`。`install.sh` 会把这几项作为 preflight 硬校验。
+  不挂载 `/dev/fuse`。显式配置 `YIYI_FUSE_ENABLED=true` 后，安装脚本仅放行
+  FUSE 所需的 `SYS_ADMIN` 和 `/dev/fuse`，始终拒绝 `privileged`。准备目录与关闭步骤见
+  [README](README.md#可选开启-fuse-主机挂载)。
 - 生产环境应为网页入口配置 HTTPS。
 
 ## 安装脚本的许可证校验

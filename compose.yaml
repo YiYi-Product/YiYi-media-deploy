@@ -25,7 +25,7 @@
 #   * 本文件解析后只能出现 yiyi-media、postgres、redis 三个服务，不使用 profile；
 #   * PostgreSQL 与 Redis 走 Compose 私有网络，默认不向宿主机发布任何端口；
 #   * 应用容器发布前端 18080 与 Play Agent 19090（播放客户端要直连）；
-#   * 应用容器不使用 privileged、不授予 SYS_ADMIN、不挂载 /dev/fuse（计划 §11）；
+#   * 应用容器默认不提权；显式启用 FUSE 时由安装脚本添加 SYS_ADMIN 与 /dev/fuse；
 #   * 镜像标签统一由 YIYI_IMAGE_TAG 锁定。
 
 name: yiyi
@@ -56,8 +56,7 @@ services:
     # http://host.docker.internal:18092（见 README「本机自建授权中心」）。
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # 聚合容器承载全部服务，因此更不能提权：只做「禁止通过 setuid 提权」这一项收敛，
-    # 不添加任何 capability、不使用 privileged，也不挂载 /dev/fuse（计划 §3.4、§11）。
+    # 默认禁止额外提权。用户显式开启 FUSE 时由 compose.fuse.yaml 提供所需权限。
     security_opt:
       - no-new-privileges:true
     environment:
@@ -67,6 +66,8 @@ services:
       # 由安装脚本固定为 STANDALONE。它只用于收窄能力：产品版本边界始终以
       # 签名租约中的 edition claim 为准，改这里不会扩大授权范围。
       YIYI_DEPLOYMENT_MODE: STANDALONE
+      # FUSE 默认关闭；安装脚本生成的可选配置会在用户开启时覆盖。
+      STORAGE_MOUNT_ENABLED: "false"
       # 内置节点 ID。全新安装用默认值 node-local-*；从旧部署迁入单机版时，
       # 安装脚本会写入**原有节点 ID**，让内置节点沿用原记录，
       # 从而保住宿主媒体源的 nodeId 引用、用户线路授权与历史任务关联（计划 §7.2、§13.2）。

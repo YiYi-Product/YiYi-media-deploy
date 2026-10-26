@@ -22,6 +22,7 @@ cd "$DEPLOY_DIR"
 
 COMPOSE_FILE="$DEPLOY_DIR/compose.yaml"
 LOCAL_DISK_COMPOSE_FILE="$DEPLOY_DIR/compose.local-disks.yaml"
+FUSE_COMPOSE_FILE="$DEPLOY_DIR/compose.fuse.yaml"
 EXPECTED_SERVICES="postgres redis yiyi-media"
 # 单机版固定承载的四个业务库（计划 §6）。
 YIYI_DATABASES=(yiyi_config yiyi_user yiyi_media yiyi_storage)
@@ -178,10 +179,11 @@ fi
 # 单机版不使用 profile。COMPOSE_PROFILES 写成空值，避免旧 .env 里残留的
 # single/control 等值让 docker compose 意外启用别的服务。
 #
-# COMPOSE_FILE 显式指向单机版主配置与生成的本地磁盘配置，避免混入其它部署形态。
+# COMPOSE_FILE 显式指向单机版主配置与生成的本地磁盘、FUSE 配置。
 # 与分布式 Storage 沿用同一参数；生成文件同时供安装与日常 Compose 命令使用。
 python3 "$DEPLOY_DIR/scripts/configure-local-disks.py" "$LOCAL_DISK_COMPOSE_FILE" "$(env_value .env YIYI_LOCAL_DISK_MOUNTS)"
-set_env_value .env COMPOSE_FILE "compose.yaml:compose.local-disks.yaml"
+python3 "$DEPLOY_DIR/scripts/configure-fuse.py" "$FUSE_COMPOSE_FILE" "$(env_value .env YIYI_FUSE_ENABLED)" "$(env_value .env YIYI_FUSE_MOUNT_DIR)"
+set_env_value .env COMPOSE_FILE "compose.yaml:compose.local-disks.yaml:compose.fuse.yaml"
 set_env_value .env YIYI_DEPLOYMENT_MODE "STANDALONE"
 set_env_value .env COMPOSE_PROFILES ""
 printf '%s\n' "STANDALONE" > .deployment-mode
@@ -484,7 +486,7 @@ configure_credential_master_key
 # ── Compose 调用 ────────────────────────────────────────────────────────────
 # 单机版没有 profile，因此不带 --profile。
 compose() {
-  docker compose --env-file "$DEPLOY_DIR/.env" -f "$COMPOSE_FILE" -f "$LOCAL_DISK_COMPOSE_FILE" "$@"
+  docker compose --env-file "$DEPLOY_DIR/.env" -f "$COMPOSE_FILE" -f "$LOCAL_DISK_COMPOSE_FILE" -f "$FUSE_COMPOSE_FILE" "$@"
 }
 
 # ── 授权公钥（信任根）同步 ──────────────────────────────────────────────────
@@ -611,18 +613,22 @@ EOF
     return 1
   fi
 
-  # 单机版不允许高权限：不给聚合容器 privileged / SYS_ADMIN / /dev/fuse（计划 §3.4、§11）。
-  if grep -Eq '^[[:space:]]*privileged:[[:space:]]*true' <<< "$resolved"; then
-    echo "单机版 Compose 不允许 privileged: true" >&2
-    return 1
-  fi
-  if grep -Eq '^[[:space:]]*cap_add:' <<< "$resolved"; then
-    echo "单机版 Compose 不允许添加 capability（含 SYS_ADMIN）" >&2
-    return 1
-  fi
-  if grep -Eq '^[[:space:]]*devices:' <<< "$resolved" || grep -q '/dev/fuse' <<< "$resolved"; then
-    echo "单机版 Compose 不允许挂载 /dev/fuse" >&2
-    return 1
+  # 显式开启 FUSE 后仅放行所需的 SYS_ADMIN 和 /dev/fuse；始终拒绝 privileged。
+  if [[ "$(env_value .env YIYI_FUSE_ENABLED | tr -d "\"'" | tr '[:upper:]' '[:lower:]')" == "true" ]]; then
+    compose config --format json | python3 "$DEPLOY_DIR/scripts/configure-fuse.py" --validate || return 1
+  else
+    if grep -Eq '^[[:space:]]*privileged:[[:space:]]*true' <<< "$resolved"; then
+      echo "单机版 Compose 不允许 privileged: true" >&2
+      return 1
+    fi
+    if grep -Eq '^[[:space:]]*cap_add:' <<< "$resolved"; then
+      echo "未启用 FUSE，单机版 Compose 不允许添加 capability" >&2
+      return 1
+    fi
+    if grep -Eq '^[[:space:]]*devices:' <<< "$resolved" || grep -q '/dev/fuse' <<< "$resolved"; then
+      echo "未启用 FUSE，单机版 Compose 不允许挂载 /dev/fuse" >&2
+      return 1
+    fi
   fi
 
   # 部署形态必须固定为 STANDALONE；它只收窄能力，真正的授权边界是签名租约。
