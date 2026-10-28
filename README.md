@@ -166,6 +166,7 @@ COMPOSE_PROFILES=bundled-postgres,bundled-redis docker compose up -d
 3. **安全基线**：进「安全审计 → 概览 → 安全基线自检」，六项里应当有四项为 OK：
    - 事件记录 / 限流 / 会话撤销 —— 必须 **OK**；
    - 「真实客户端 IP」在把前置反代的出口地址填进 `YIYI_TRUSTED_PROXY_ADDRESSES` 之前是 **WARN**（正常）；
+     该变量在进程启动时读取，改完要**重启对应容器**才生效（分布式形态下每个跑 user/media/gateway/storage 的机器都要配）。
    - 「管理员 MFA」「二次验证」默认关闭，显示 **WARN** 属已知状态；
    - 「长期会话」列出超过 30 天仍未失效的会话（系统无会话过期机制，属已知取舍）。
 4. **登录一次**：用管理员账号登录，确认「安全审计 → 事件流水」里能看到这条 `LOGIN_SUCCESS`（写链路通）；
