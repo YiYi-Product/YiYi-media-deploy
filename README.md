@@ -403,6 +403,14 @@ sudo ./install.sh
 `maxPlayAgentNodes` 限制，超限时新增会被拒绝并返回 `409 LICENSE_NODE_QUOTA_EXCEEDED`。
 :::
 
+## 启用 Telegram Bot（可选）
+
+要使用 Bot 命令，需在 `.env` 填写 Bot Token、用户名、Webhook 密钥及
+`YIYI_TELEGRAM_WEBHOOK_URL`（完整公网 HTTPS 回调地址）。配齐后 user 服务启动时自动注册 Webhook，
+**只填密钥不会接通 Bot**。多机版在 user 角色主机配置，回调填写 edge 的公网域名。
+
+完整步骤、旧部署浏览器注册链接、`/start` 验证与排障见 [Telegram Bot 启用指南](TELEGRAM_BOT.md)。
+
 ## 升级
 
 ::: warning 保留日常备份
