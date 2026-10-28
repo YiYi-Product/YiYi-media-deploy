@@ -405,7 +405,13 @@ if [[ "$role" == "single" || "$role" == "control" ]]; then
   fi
   generate_optional_secret_if_requested YIYI_REDIS_PASSWORD
   generate_secret_if_needed YIYI_SERVICE_TOKEN
-  generate_secret_if_needed YIYI_NODE_TOKEN
+  generate_secret_if_needed YIYI_SERVICE_TOKEN
+generate_secret_if_needed YIYI_NODE_TOKEN
+# 管理员 MFA 的加密密钥：必须是 **base64 的 32 字节**（MfaSecretCipher 会校验长度），
+# 不能复用上面的 hex 生成器，否则启动时会打"密钥不是合法 base64/长度不对"并降级为不可用。
+if [[ -z "$(env_value .env YIYI_MFA_SECRET_KEY)" || "$(env_value .env YIYI_MFA_SECRET_KEY)" == "GENERATE_ON_INSTALL" ]]; then
+  set_env_value .env YIYI_MFA_SECRET_KEY "$(openssl rand -base64 32)"
+fi
   generate_secret_if_needed YIYI_LICENSE_CLUSTER_TOKEN
   generate_relay_certificate
 fi
