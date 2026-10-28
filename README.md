@@ -106,6 +106,14 @@ docker compose ps
 或用 `docker compose --profile <角色> up -d` 直接指定。
 若控制面全在一台机器上，用 `v2-all-in-one` 分支更省事（无需角色与 join 分发）。
 
+## 启用 Telegram Bot（可选）
+
+要使用 Bot 命令，需在 `.env` 填写 Bot Token、用户名、Webhook 密钥及
+`YIYI_TELEGRAM_WEBHOOK_URL`（完整公网 HTTPS 回调地址）。配齐后 user 服务启动时自动注册 Webhook，
+**只填密钥不会接通 Bot**。多机版在 user 角色主机配置，回调填写 edge 的公网域名。
+
+完整步骤、旧部署浏览器注册链接、`/start` 验证与排障见 [Telegram Bot 启用指南](TELEGRAM_BOT.md)。
+
 ## 数据库与缓存（可任选自带或外部，互相独立）
 
 只在 `control` 角色上生效：
