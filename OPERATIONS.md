@@ -411,6 +411,17 @@ docker compose exec postgres psql -U "$YIYI_DB_USER" -d yiyi_config
   不挂载 `/dev/fuse`。显式配置 `YIYI_FUSE_ENABLED=true` 后，安装脚本仅放行
   FUSE 所需的 `SYS_ADMIN` 和 `/dev/fuse`，始终拒绝 `privileged`。准备目录与关闭步骤见
   [README](README.md#可选开启-fuse-主机挂载)。
+- `YIYI_MFA_SECRET_KEY`（管理员 MFA / TOTP 的加密密钥）由安装脚本生成，**必须是 32 字节 base64**。
+  误填十六进制或长度不对时，服务会打「不是合法 base64 / 长度不对」并**降级为不可用**
+  （管理员绑定验证器返回 503「服务端未配置 MFA 密钥」）。这个值丢失后已绑定用户的验证器无法解密：
+  在「安全审计 → 概览 → 管理员 MFA 状态」里逐个「重置 MFA」让对方重新绑定即可恢复；
+  轮换时先把旧值填进 `YIYI_MFA_SECRET_KEY_PREVIOUS`，跑完批量重加密（`POST /api/auth/admin/security/mfa/reencrypt`）
+  再摘掉旧值。
+- `YIYI_TRUSTED_PROXY_ADDRESSES`：前面有 Caddy / Cloudflare 时填其出口地址（逗号分隔）。
+  不填时事件里记录的是**前置代理的地址**，「安全审计 → 概览 → 安全基线自检」里的
+  「真实客户端 IP」会一直是 WARN，攻击源排行也会把代理地址当成攻击来源。
+- `YIYI_SETUP_TOKEN` 只在首次初始化管理员时用（`/api/auth/setup/init` 的 `X-YiYi-Setup-Token` 头，
+  常量时间比较）。初始化完成后建议从 `.env` 移除并重启 user 服务，让初始化入口彻底关闭。
 - 生产环境应为网页入口配置 HTTPS。
 
 ## 安装脚本的许可证校验
