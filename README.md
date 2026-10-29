@@ -181,3 +181,20 @@ COMPOSE_PROFILES=bundled-postgres,bundled-redis docker compose up -d
    拉取安装脚本）；`postgres`/`redis` 默认只绑内网地址，不要暴露到公网。
 3. **许可证信任根**：`YIYI_LICENSE_PUBLIC_JWK_FILE` 指向的公钥必须与镜像内置的
    信任根一致，安装脚本会在启动前强校验，不一致直接中止。
+
+
+## 管理员 MFA 密钥配置
+
+`YIYI_MFA_SECRET_KEY` 配置在部署目录的 `.env` 中，用于加密保存管理员验证器密钥。
+模板的 `GENERATE_ON_INSTALL` 是安装占位值；执行 `sudo ./install.sh` 时会生成
+32 字节随机值的 base64 并回写，后续安装保留原值。Compose 会将它和可选的
+`YIYI_MFA_SECRET_KEY_PREVIOUS` 传入运行 user 服务的容器。
+安装脚本会校验格式，不在终端显示密钥；`.env` 保持 `0600`，请安全备份。
+
+已有部署更新配置后，需要重新创建对应应用容器，单纯 `docker compose restart`
+不会加载新的环境变量。使用本分支正常安装 / 升级流程应用变更；
+配置密钥本身不会开启全站 MFA，还需在「用户中心 → 账号安全」绑定验证器，
+再到「安全审计 → 安全配置」开启策略。
+
+密钥不得提交到 Git。已有 MFA 数据时不要删除或重新生成密钥；轮换时保留旧值到
+`YIYI_MFA_SECRET_KEY_PREVIOUS`，完成重加密并确认没有旧密文后才移除旧密钥。
