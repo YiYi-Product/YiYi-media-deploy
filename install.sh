@@ -152,6 +152,7 @@ cluster_keys=(
   YIYI_LICENSE_CLUSTER_TOKEN YIYI_LICENSE_SERVER_URL
   YIYI_LICENSE_SYNC_URL
 )
+mfa_keys=(YIYI_MFA_SECRET_KEY YIYI_MFA_SECRET_KEY_PREVIOUS)
 cluster_optional_keys=(YIYI_DB_MODE YIYI_DB_PORT YIYI_REDIS_MODE YIYI_REDIS_PORT)
 
 if [[ "$role" != "control" ]]; then
@@ -166,6 +167,21 @@ if [[ "$role" != "control" ]]; then
         set_env_value .env "$key" "$(env_value join.env "$key")"
       fi
     done
+    # MFA 密钥只导入 user 的 .env，所有 user 实例必须使用同一份值。
+    # 兼容旧 join.env：缺键时保留本机原值，后续校验拒绝缺失/占位值。
+    if [[ "$role" == "user" ]]; then
+      local_mfa_key="$(env_value .env YIYI_MFA_SECRET_KEY)"
+      joined_mfa_key="$(env_value join.env YIYI_MFA_SECRET_KEY)"
+      if [[ -n "$local_mfa_key" && "$local_mfa_key" != "GENERATE_ON_INSTALL" && -n "$joined_mfa_key" && "$local_mfa_key" != "$joined_mfa_key" ]]; then
+        echo "user 原有 MFA 密钥与 join.env 不一致；已停止以防覆盖。请核对 control 的原密钥，轮换须保留旧密钥并按流程同步。" >&2
+        exit 1
+      fi
+      for key in "${mfa_keys[@]}"; do
+        if grep -q "^${key}=" join.env; then
+          set_env_value .env "$key" "$(env_value join.env "$key")"
+        fi
+      done
+    fi
     cp cluster-relay.crt config/cluster-relay.crt
     chmod 0644 config/cluster-relay.crt
   fi
@@ -341,6 +357,44 @@ validate_postgres_data_dir() {
 
 configure_data_dir
 
+configure_mfa_secret_key() {
+  local mode="${1:-generate}" value
+  value="$(env_value .env YIYI_MFA_SECRET_KEY)"
+  if [[ -z "$value" || "$value" == "GENERATE_ON_INSTALL" ]]; then
+    if [[ "$mode" == "require" ]]; then
+      echo "user 角色缺少 MFA 密钥：请先在 control 运行 install.sh，再安全复制新的 join.env 到所有 user 机器。已有 MFA 数据必须沿用原密钥。" >&2
+      return 1
+    fi
+    set_env_value .env YIYI_MFA_SECRET_KEY "$(openssl rand -base64 32)"
+  fi
+  # 校验时只从文件读密钥，不在日志或错误信息中输出密钥值。
+  python3 - <<'MFA_KEY_CHECK'
+import base64
+import binascii
+from pathlib import Path
+import sys
+
+values = {}
+for line in Path(".env").read_text().splitlines():
+    key, sep, value = line.partition("=")
+    if sep and key not in values:
+        values[key] = value
+for key in ("YIYI_MFA_SECRET_KEY", "YIYI_MFA_SECRET_KEY_PREVIOUS"):
+    value = values.get(key, "")
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        value = value[1:-1]
+    if not value and key.endswith("_PREVIOUS"):
+        continue
+    try:
+        if len(base64.b64decode(value, validate=True)) != 32:
+            raise ValueError()
+    except (ValueError, binascii.Error):
+        print(f"{key} 格式无效：必须是 32 字节随机值的 base64，已有密钥不可随意替换。", file=sys.stderr)
+        sys.exit(1)
+MFA_KEY_CHECK
+  chmod 0600 .env
+}
+
 generate_secret_if_needed() {
   local key="$1" value
   value="$(env_value .env "$key")"
@@ -403,13 +457,13 @@ if [[ "$role" == "control" ]]; then
   generate_secret_if_needed YIYI_SERVICE_TOKEN
   generate_secret_if_needed YIYI_SERVICE_TOKEN
 generate_secret_if_needed YIYI_NODE_TOKEN
-# 管理员 MFA 的加密密钥：必须是 **base64 的 32 字节**（MfaSecretCipher 会校验长度），
-# 不能复用上面的 hex 生成器，否则启动时会打"密钥不是合法 base64/长度不对"并降级为不可用。
-if [[ -z "$(env_value .env YIYI_MFA_SECRET_KEY)" || "$(env_value .env YIYI_MFA_SECRET_KEY)" == "GENERATE_ON_INSTALL" ]]; then
-  set_env_value .env YIYI_MFA_SECRET_KEY "$(openssl rand -base64 32)"
-fi
+  configure_mfa_secret_key
   generate_secret_if_needed YIYI_LICENSE_CLUSTER_TOKEN
   generate_relay_certificate
+fi
+# user 禁止自行生成不同密钥；media / edge 不需要此密钥。
+if [[ "$role" == "user" ]]; then
+  configure_mfa_secret_key require
 fi
 
 if [[ "$role" == "control" ]]; then
@@ -597,7 +651,7 @@ export_join() {
   {
     echo "# YiYi Media 集群加入配置；导入后应删除。"
     local key
-    for key in "${cluster_keys[@]}" "${cluster_optional_keys[@]}"; do
+    for key in "${cluster_keys[@]}" "${cluster_optional_keys[@]}" "${mfa_keys[@]}"; do
       printf '%s=%s\n' "$key" "$(env_value .env "$key")"
     done
   } > join.env
