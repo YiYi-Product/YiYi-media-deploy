@@ -388,6 +388,44 @@ validate_postgres_data_dir() {
 }
 
 # ── 凭据 ────────────────────────────────────────────────────────────────────
+configure_mfa_secret_key() {
+  local mode="${1:-generate}" value
+  value="$(env_value .env YIYI_MFA_SECRET_KEY)"
+  if [[ -z "$value" || "$value" == "GENERATE_ON_INSTALL" ]]; then
+    if [[ "$mode" == "require" ]]; then
+      echo "user 角色缺少 MFA 密钥：请先在 control 运行 install.sh，再安全复制新的 join.env 到所有 user 机器。已有 MFA 数据必须沿用原密钥。" >&2
+      return 1
+    fi
+    set_env_value .env YIYI_MFA_SECRET_KEY "$(openssl rand -base64 32)"
+  fi
+  # 校验时只从文件读密钥，不在日志或错误信息中输出密钥值。
+  python3 - <<'MFA_KEY_CHECK'
+import base64
+import binascii
+from pathlib import Path
+import sys
+
+values = {}
+for line in Path(".env").read_text().splitlines():
+    key, sep, value = line.partition("=")
+    if sep and key not in values:
+        values[key] = value
+for key in ("YIYI_MFA_SECRET_KEY", "YIYI_MFA_SECRET_KEY_PREVIOUS"):
+    value = values.get(key, "")
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        value = value[1:-1]
+    if not value and key.endswith("_PREVIOUS"):
+        continue
+    try:
+        if len(base64.b64decode(value, validate=True)) != 32:
+            raise ValueError()
+    except (ValueError, binascii.Error):
+        print(f"{key} 格式无效：必须是 32 字节随机值的 base64，已有密钥不可随意替换。", file=sys.stderr)
+        sys.exit(1)
+MFA_KEY_CHECK
+  chmod 0600 .env
+}
+
 generate_secret_if_needed() {
   local key="$1" value
   value="$(env_value .env "$key")"
@@ -482,11 +520,7 @@ generate_optional_secret_if_requested YIYI_REDIS_PASSWORD
 generate_secret_if_needed YIYI_SERVICE_TOKEN
 generate_secret_if_needed YIYI_SERVICE_TOKEN
 generate_secret_if_needed YIYI_NODE_TOKEN
-# 管理员 MFA 的加密密钥：必须是 **base64 的 32 字节**（MfaSecretCipher 会校验长度），
-# 不能复用上面的 hex 生成器，否则启动时会打"密钥不是合法 base64/长度不对"并降级为不可用。
-if [[ -z "$(env_value .env YIYI_MFA_SECRET_KEY)" || "$(env_value .env YIYI_MFA_SECRET_KEY)" == "GENERATE_ON_INSTALL" ]]; then
-  set_env_value .env YIYI_MFA_SECRET_KEY "$(openssl rand -base64 32)"
-fi
+configure_mfa_secret_key
 configure_credential_master_key
 
 # ── Compose 调用 ────────────────────────────────────────────────────────────
