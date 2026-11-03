@@ -50,6 +50,11 @@ sudo ./install.sh
 
 ## 数据目录与权限
 
+节点防火墙与跨主机连通性见 [NODE_NETWORK.md](NODE_NETWORK.md)。
+脚本位于本分支根目录的 `yiyi-node-firewall.py`；新增节点后须在实际目标机器配置来源 IP，
+配置后从控制面、播放机分别验证调用链路。防火墙规则不会随应用容器重启自动补齐。
+脚本自己的规则记录保存在主机 `/var/lib/yiyi-node-firewall/state.json`，撤销时需要保留该文件。
+
 所有持久化数据默认位于部署目录下的 `data`，可通过 `.env` 的 `YIYI_DATA_DIR`
 指定其他根目录（相对路径以部署目录为基准）。
 

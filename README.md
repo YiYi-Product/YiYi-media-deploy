@@ -49,6 +49,8 @@ Edition 写在**签名租约**里，由服务端强制，改环境变量无法�
 | `.env.example` | 环境变量模板 |
 | `postgres-init.sql` | 首次启动时建库建角色 |
 | `OPERATIONS.md` | 日常运维（备份、升级、排障） |
+| `NODE_NETWORK.md` | 外部播放 / 存储节点部署前的防火墙放行与连通性排查 |
+| `yiyi-node-firewall.py` | 按本机角色和来源 IP 配置已启用的 UFW/firewalld；默认只读预览 |
 | `RELEASING.md` | 镜像发布说明 |
 
 ## 部署步骤
@@ -62,6 +64,23 @@ sudo ./install.sh
 ```
 
 装完后直接访问 `http://<YIYI_PUBLIC_HOST>:18080`，首次使用在网页上完成许可证激活。
+
+### 增加播放节点或存储节点
+
+在网页「节点管理」新增节点，使用页面生成的完整命令安装。
+若主机启用了防火墙，先按 [NODE_NETWORK.md](NODE_NETWORK.md) 放行实际调用方。
+例如在控制面为新节点预览规则，再添加：
+
+```bash
+NODE_IP=203.0.113.20  # 换成新节点的实际出口 IP
+sudo python3 ./yiyi-node-firewall.py --role control --node-ip "$NODE_IP"
+sudo python3 ./yiyi-node-firewall.py --role control --node-ip "$NODE_IP" --apply
+```
+
+播放机、存储机也要分别配置；完整命令、firewalld zone、自定义端口和撤销方法见指南。
+脚本不由 `install.sh` 自动执行，不启用防火墙，不重启服务，也不向全部公网来源开放业务端口。
+
+### 后续升级
 
 后续升级（**一条命令**，完整步骤与注意事项见 [UPGRADE.md](UPGRADE.md)）：
 
