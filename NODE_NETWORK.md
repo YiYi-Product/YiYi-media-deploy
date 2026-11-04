@@ -41,6 +41,30 @@ docker compose -p yiyi config --services
 
 ## 3. 使用节点防火墙脚本
 
+### 按节点 IP 放行全部端口
+
+需要让已知节点之间完全互访时，使用 `--all-ports`，重复 `--peer-ip` 列出允许的对端实际出口 IP。
+此模式放行这些来源的所有入站端口与协议；其他公网来源继续遵循原防火墙规则。
+在每台启用了 UFW/firewalld 的机器上执行，并排除本机 IP：
+
+```bash
+# 示例：在存储机允许控制面与两台播放机；请替换实际 IP
+sudo python3 ./yiyi-node-firewall.py --role storage --all-ports \
+  --peer-ip 203.0.113.10 --peer-ip 203.0.113.20 --peer-ip 203.0.113.21
+sudo python3 ./yiyi-node-firewall.py --role storage --all-ports \
+  --peer-ip 203.0.113.10 --peer-ip 203.0.113.20 --peer-ip 203.0.113.21 --apply
+```
+
+在控制面、播放机分别改用 `--role control`、`--role play` 并列出其对端。
+firewalld 仍需指定 `--zone`。撤销时保留 `--all-ports`、同一角色/IP/zone，将 `--apply` 换成 `--remove`；
+只撤销本模式记录的规则，原有按端口规则保留。不加 `--all-ports` 时继续按下文的必要端口清单放行。
+
+**每增加一台播放机，都要更新每台实际回源存储机的来源白名单。**
+只在控制面放行注册端口，并不会自动允许该播放机读取存储资源。
+存储 `18084` 超时先核对实际播放机来源 IP；已有来源放行仍超时的，继续查网络路径与请求取消原因。
+
+### 获取脚本与前提
+
 脚本随本仓库的 `v2-all-in-one` 分支提供，文件是仓库根目录的
 [`yiyi-node-firewall.py`](yiyi-node-firewall.py)，不依赖文档站下载或控制面镜像升级。
 需要 Python 3.8 或更高版本，使用 `sudo python3` 运行。脚本无需节点令牌或管理员密码，

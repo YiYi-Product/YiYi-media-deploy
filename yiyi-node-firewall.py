@@ -59,6 +59,8 @@ def arguments(argv=None):
     p.add_argument('--node-ip', action='append', default=[], type=address, help='控制面允许的节点 IP，可重复')
     p.add_argument('--control-ip', action='append', default=[], type=address, help='节点允许的控制面 IP，可重复')
     p.add_argument('--play-ip', action='append', default=[], type=address, help='存储机允许的播放节点 IP，可重复')
+    p.add_argument('--all-ports', action='store_true', help='放行指定对端 IP 的全部端口与协议；不向其他来源开放')
+    p.add_argument('--peer-ip', action='append', default=[], type=address, help='--all-ports 模式的对端 IP，可重复')
     for name, default in [('user', 18082), ('media', 18083), ('config', 18085), ('storage', 18084), ('play', 19090)]:
         p.add_argument('--{}-port'.format(name), type=port, default=default)
     p.add_argument('--backend', choices=['auto', 'ufw', 'firewalld'], default='auto')
@@ -68,6 +70,12 @@ def arguments(argv=None):
     modes.add_argument('--apply', action='store_true', help='添加并保存规则')
     modes.add_argument('--remove', action='store_true', help='撤销参数选中的、由本脚本新增的规则')
     a = p.parse_args(argv)
+    if a.all_ports:
+        if not (a.peer_ip or a.node_ip or a.control_ip or a.play_ip):
+            p.error('--all-ports 必须指定至少一个对端 IP')
+        return a
+    if a.peer_ip:
+        p.error('--peer-ip 必须与 --all-ports 一起使用')
     valid = {'control': (bool(a.node_ip), not a.control_ip and not a.play_ip),
              'storage': (bool(a.control_ip or a.play_ip), not a.node_ip),
              'play': (bool(a.control_ip), not a.node_ip and not a.play_ip)}
@@ -77,7 +85,9 @@ def arguments(argv=None):
 
 
 def plan(a):
-    if a.role == 'control':
+    if a.all_ports:
+        pairs = [(ip, 0) for ip in a.peer_ip + a.node_ip + a.control_ip + a.play_ip]
+    elif a.role == 'control':
         pairs = [(ip, port) for ip in a.node_ip for port in [a.user_port, a.media_port, a.config_port]]
     elif a.role == 'storage':
         pairs = [(ip, a.storage_port) for ip in a.control_ip + a.play_ip]
@@ -123,8 +133,8 @@ def ufw_matches(r):
     matches = []
     for line in run(['ufw', 'status', 'numbered']).stdout.splitlines():
         body, _, comment = line.partition('#')
-        m = re.match(r'^\[\s*(\d+)\]\s+(\d+)/tcp(?:\s+\(v6\))?\s+ALLOW IN\s+(\S+)\s*$', body.strip())
-        if not m or int(m[2]) != r['port']:
+        m = re.match(r'^\[\s*(\d+)\]\s+(Anywhere|\d+/tcp)(?:\s+\(v6\))?\s+ALLOW IN\s+(\S+)\s*$', body.strip())
+        if not m or (0 if m[2] == 'Anywhere' else int(m[2].split('/')[0])) != r['port']:
             continue
         try:
             network = ipaddress.ip_network(m[3], strict=False)
@@ -138,7 +148,15 @@ def ufw_matches(r):
 
 def rich_rule(r):
     family = 'ipv6' if ':' in r['ip'] else 'ipv4'
+    if r['port'] == 0:
+        return 'rule family="{}" priority="-100" source address="{}" accept'.format(family, r['ip'])
     return 'rule family="{}" priority="-100" source address="{}" port port="{}" protocol="tcp" accept'.format(family, r['ip'], r['port'])
+
+
+def ufw_add_command(r):
+    if r['port'] == 0:
+        return ['ufw', 'insert', '1', 'allow', 'from', r['ip'], 'comment', tag(r)]
+    return ['ufw', 'insert', '1', 'allow', 'proto', 'tcp', 'from', r['ip'], 'to', 'any', 'port', str(r['port']), 'comment', tag(r)]
 
 
 def firewall_command(r, action):
@@ -157,7 +175,7 @@ def exists(r):
 def change(r, add):
     if r['backend'] == 'ufw':
         if add:
-            args = ['ufw', 'insert', '1', 'allow', 'proto', 'tcp', 'from', r['ip'], 'to', 'any', 'port', str(r['port']), 'comment', tag(r)]
+            args = ufw_add_command(r)
         else:
             matches = [number for number, owned in ufw_matches(r) if owned]
             if not matches:
@@ -240,9 +258,9 @@ def transaction(rules, remove):
 def main(argv=None):
     a = arguments(argv)
     pairs = plan(a)
-    print('本机角色：{}；仅处理入站 TCP，不配置客户端公网播放入口。'.format(a.role))
+    print('本机角色：{}；仅处理指定来源入站，不配置客户端公网播放入口。'.format(a.role))
     for r in pairs:
-        print('  来源 {} -> 本机 TCP {}'.format(r['ip'], r['port']))
+        print('  来源 {} -> 本机 {}'.format(r['ip'], '全部端口及协议' if r['port'] == 0 else 'TCP {}'.format(r['port'])))
     if sys.platform != 'linux' or os.geteuid() != 0:
         raise Error('请在目标 Linux 主机使用 sudo python3 运行；不加 --apply 时仅预览。')
     backend = detect(a)
@@ -253,7 +271,7 @@ def main(argv=None):
     print('防火墙：' + backend + ('，zone=' + a.zone if a.zone else ''))
     if not a.apply and not a.remove:
         for r in rules:
-            cmd = (['ufw', 'insert', '1', 'allow', 'proto', 'tcp', 'from', r['ip'], 'to', 'any', 'port', str(r['port']), 'comment', tag(r)]
+            cmd = (ufw_add_command(r)
                    if backend == 'ufw' else firewall_command(r, 'add'))
             print('预览：', shlex.join(cmd))
         print('未写入文件或规则。确认 IP/端口/zone 后加 --apply；撤销使用相同参数加 --remove。')

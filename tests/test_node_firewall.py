@@ -28,10 +28,10 @@ class Firewall:
         if args == ['ufw', 'status']:
             out = 'Status: active\n'
         elif args == ['ufw', 'status', 'numbered']:
-            out = '\n'.join('[{}] {}/tcp ALLOW IN {} # {}'.format(i, p, ip, tag)
+            out = '\n'.join('[{}] {} ALLOW IN {} # {}'.format(i, str(p)+'/tcp' if p else 'Anywhere', ip, tag)
                             for i, (ip, p, tag) in enumerate(self.ufw, 1))
         elif args[:3] == ['ufw', 'insert', '1']:
-            p = int(args[args.index('port') + 1])
+            p = int(args[args.index('port') + 1]) if 'port' in args else 0
             if p == self.fail_port:
                 code = 2
             else:
@@ -90,6 +90,25 @@ class Tests(unittest.TestCase):
         self.assertFalse(fw.STATE_DIR.exists())
         self.assertEqual(fake.ufw, [])
         self.assertFalse(any('insert' in c or 'delete' in c for c in fake.commands))
+
+    def test_all_ports_ufw_repeat_and_remove_preserves_narrow_rules(self):
+        fake = self.use('ufw')
+        fake.ufw.append(('192.0.2.1', 18084, 'administrator'))
+        args = ['--role', 'storage', '--all-ports', '--peer-ip', '192.0.2.1', '--peer-ip', '192.0.2.2']
+        fw.main(args + ['--apply'])
+        fw.main(args + ['--apply'])
+        self.assertEqual(len(fake.ufw), 3)
+        fw.main(args + ['--remove'])
+        self.assertEqual(fake.ufw, [('192.0.2.1', 18084, 'administrator')])
+
+    def test_all_ports_firewalld_has_no_port_or_protocol_restriction(self):
+        fake = self.use('firewalld')
+        args = ['--role', 'play', '--all-ports', '--peer-ip', '192.0.2.1', '--zone', 'public']
+        fw.main(args + ['--apply'])
+        self.assertEqual(len(fake.rich), 2)
+        self.assertTrue(all('port=' not in r[2] and 'protocol=' not in r[2] for r in fake.rich))
+        fw.main(args + ['--remove'])
+        self.assertFalse(fake.rich)
 
     def test_ufw_repeat_and_remove_preserve_preexisting_rule(self):
         fake = self.use('ufw')

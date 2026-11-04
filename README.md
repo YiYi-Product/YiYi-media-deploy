@@ -78,6 +78,8 @@ sudo python3 ./yiyi-node-firewall.py --role control --node-ip "$NODE_IP" --apply
 ```
 
 播放机、存储机也要分别配置；完整命令、firewalld zone、自定义端口和撤销方法见指南。
+需要已知节点间全部端口互通时，使用 `--all-ports --peer-ip <对端IP>`（可重复指定 IP）。
+新增播放机还须在每台实际回源的存储机更新来源白名单，不能只配置控制面。
 脚本不由 `install.sh` 自动执行，不启用防火墙，不重启服务，也不向全部公网来源开放业务端口。
 
 ### 后续升级
