@@ -153,6 +153,7 @@ cluster_keys=(
   YIYI_LICENSE_SYNC_URL
 )
 mfa_keys=(YIYI_MFA_SECRET_KEY YIYI_MFA_SECRET_KEY_PREVIOUS)
+setup_keys=(YIYI_SETUP_TOKEN)
 cluster_optional_keys=(YIYI_DB_MODE YIYI_DB_PORT YIYI_REDIS_MODE YIYI_REDIS_PORT)
 
 if [[ "$role" != "control" ]]; then
@@ -170,6 +171,16 @@ if [[ "$role" != "control" ]]; then
     # MFA 密钥只导入 user 的 .env，所有 user 实例必须使用同一份值。
     # 兼容旧 join.env：缺键时保留本机原值，后续校验拒绝缺失/占位值。
     if [[ "$role" == "user" ]]; then
+      # 只向 user 导入初始化令牌；允许空值以同步关闭入口。
+      if grep -q '^YIYI_SETUP_TOKEN=' join.env; then
+        local_setup_token="$(env_value .env YIYI_SETUP_TOKEN)"
+        joined_setup_token="$(env_value join.env YIYI_SETUP_TOKEN)"
+        if grep -q '^YIYI_SETUP_TOKEN=' .env && [[ "$local_setup_token" != "GENERATE_ON_INSTALL" && "$local_setup_token" != "$joined_setup_token" ]]; then
+          echo "user 初始化令牌与 join.env 不一致；请核对 control 配置后同步，已停止以防覆盖。" >&2
+          exit 1
+        fi
+        set_env_value .env YIYI_SETUP_TOKEN "$joined_setup_token"
+      fi
       local_mfa_key="$(env_value .env YIYI_MFA_SECRET_KEY)"
       joined_mfa_key="$(env_value join.env YIYI_MFA_SECRET_KEY)"
       if [[ -n "$local_mfa_key" && "$local_mfa_key" != "GENERATE_ON_INSTALL" && -n "$joined_mfa_key" && "$local_mfa_key" != "$joined_mfa_key" ]]; then
@@ -395,6 +406,30 @@ MFA_KEY_CHECK
   chmod 0600 .env
 }
 
+# 初始化令牌只落盘，不输出到安装日志。显式空值表示管理员已关闭入口。
+configure_setup_token() {
+  local mode="${1:-generate}" value token_file
+  value="$(env_value .env YIYI_SETUP_TOKEN)"
+  if ! grep -q '^YIYI_SETUP_TOKEN=' .env || [[ "$value" == "GENERATE_ON_INSTALL" ]]; then
+    if [[ "$mode" == "require" ]]; then
+      echo "user 缺少初始化令牌配置：请先在 control 运行 install.sh，再安全复制新的 join.env。" >&2
+      return 1
+    fi
+    value="$(openssl rand -hex 32)"
+    set_env_value .env YIYI_SETUP_TOKEN "$value"
+  fi
+  chmod 0600 .env
+  if [[ -z "$value" ]]; then
+    rm -f "$DEPLOY_DIR/.setup-token"
+    return
+  fi
+  token_file="$(mktemp "$DEPLOY_DIR/.setup-token.XXXXXX")"
+  chmod 0600 "$token_file"
+  printf '%s\n' "$value" > "$token_file"
+  mv -f "$token_file" "$DEPLOY_DIR/.setup-token"
+  echo "初始化令牌已保存到 $DEPLOY_DIR/.setup-token（权限 0600）；首次创建管理员时填写，请勿分享或写入日志。"
+}
+
 generate_secret_if_needed() {
   local key="$1" value
   value="$(env_value .env "$key")"
@@ -457,12 +492,14 @@ if [[ "$role" == "control" ]]; then
   generate_secret_if_needed YIYI_SERVICE_TOKEN
   generate_secret_if_needed YIYI_SERVICE_TOKEN
 generate_secret_if_needed YIYI_NODE_TOKEN
+  configure_setup_token
   configure_mfa_secret_key
   generate_secret_if_needed YIYI_LICENSE_CLUSTER_TOKEN
   generate_relay_certificate
 fi
 # user 禁止自行生成不同密钥；media / edge 不需要此密钥。
 if [[ "$role" == "user" ]]; then
+  configure_setup_token require
   configure_mfa_secret_key require
 fi
 
@@ -651,7 +688,7 @@ export_join() {
   {
     echo "# YiYi Media 集群加入配置；导入后应删除。"
     local key
-    for key in "${cluster_keys[@]}" "${cluster_optional_keys[@]}" "${mfa_keys[@]}"; do
+    for key in "${cluster_keys[@]}" "${cluster_optional_keys[@]}" "${setup_keys[@]}" "${mfa_keys[@]}"; do
       printf '%s=%s\n' "$key" "$(env_value .env "$key")"
     done
   } > join.env

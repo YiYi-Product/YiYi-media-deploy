@@ -23,3 +23,7 @@ migration-report-*.md
 migration-report-*.json
 
 *.log
+
+# 首次初始化凭据及原子写入临时文件。
+.setup-token
+.setup-token.*
