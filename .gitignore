@@ -34,3 +34,7 @@ __pycache__/
 
 /compose.fuse.yaml
 /compose.fuse.yaml.*
+
+# 首次初始化凭据及原子写入临时文件。
+.setup-token
+.setup-token.*

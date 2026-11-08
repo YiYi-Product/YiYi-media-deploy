@@ -421,7 +421,7 @@ docker compose exec postgres psql -U "$YIYI_DB_USER" -d yiyi_config
   不填时事件里记录的是**前置代理的地址**，「安全审计 → 概览 → 安全基线自检」里的
   「真实客户端 IP」会一直是 WARN，攻击源排行也会把代理地址当成攻击来源。
 - `YIYI_SETUP_TOKEN` 只在首次初始化管理员时用（`/api/auth/setup/init` 的 `X-YiYi-Setup-Token` 头，
-  常量时间比较）。初始化完成后建议从 `.env` 移除并重启 user 服务，让初始化入口彻底关闭。
+  常量时间比较）。初始化完成后可将 `.env` 中该项显式设为空（`YIYI_SETUP_TOKEN=`），再重建对应应用容器，让入口关闭；不要删除键，否则下次安装会重新生成。
 - 生产环境应为网页入口配置 HTTPS。
 
 ## 安装脚本的许可证校验

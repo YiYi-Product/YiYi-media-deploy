@@ -426,6 +426,30 @@ MFA_KEY_CHECK
   chmod 0600 .env
 }
 
+# 初始化令牌只落盘，不输出到安装日志。显式空值表示管理员已关闭入口。
+configure_setup_token() {
+  local mode="${1:-generate}" value token_file
+  value="$(env_value .env YIYI_SETUP_TOKEN)"
+  if ! grep -q '^YIYI_SETUP_TOKEN=' .env || [[ "$value" == "GENERATE_ON_INSTALL" ]]; then
+    if [[ "$mode" == "require" ]]; then
+      echo "user 缺少初始化令牌配置：请先在 control 运行 install.sh，再安全复制新的 join.env。" >&2
+      return 1
+    fi
+    value="$(openssl rand -hex 32)"
+    set_env_value .env YIYI_SETUP_TOKEN "$value"
+  fi
+  chmod 0600 .env
+  if [[ -z "$value" ]]; then
+    rm -f "$DEPLOY_DIR/.setup-token"
+    return
+  fi
+  token_file="$(mktemp "$DEPLOY_DIR/.setup-token.XXXXXX")"
+  chmod 0600 "$token_file"
+  printf '%s\n' "$value" > "$token_file"
+  mv -f "$token_file" "$DEPLOY_DIR/.setup-token"
+  echo "初始化令牌已保存到 $DEPLOY_DIR/.setup-token（权限 0600）；首次创建管理员时填写，请勿分享或写入日志。"
+}
+
 generate_secret_if_needed() {
   local key="$1" value
   value="$(env_value .env "$key")"
@@ -520,6 +544,7 @@ generate_optional_secret_if_requested YIYI_REDIS_PASSWORD
 generate_secret_if_needed YIYI_SERVICE_TOKEN
 generate_secret_if_needed YIYI_SERVICE_TOKEN
 generate_secret_if_needed YIYI_NODE_TOKEN
+configure_setup_token
 configure_mfa_secret_key
 configure_credential_master_key
 
